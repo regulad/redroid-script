@@ -38,6 +38,9 @@ def main():
                         default='docker',
                         help='Specify container type', 
                         choices=['docker', 'podman'])
+    parser.add_argument('-b', '--build', dest='build',
+                        help='Build the Docker image rather than just creating the Dockerfile',
+                        action='store_true')
 
     args = parser.parse_args()
     dockerfile = dockerfile + \
@@ -70,9 +73,11 @@ def main():
     with open("./Dockerfile", "w") as f:
         f.write(dockerfile)
     new_image_name = "redroid/redroid:"+"_".join(tags)
-    subprocess.run([args.container, "build", "-t", new_image_name, "."])
-    helper.print_color("Successfully built {}".format(
-        new_image_name), helper.bcolors.GREEN)
+    print("Will build to ", new_image_name)
+    if args.build:
+        subprocess.run([args.container, "build", "-t", new_image_name, "."])
+        helper.print_color("Successfully built {}".format(
+            new_image_name), helper.bcolors.GREEN)
 
 
 if __name__ == "__main__":
