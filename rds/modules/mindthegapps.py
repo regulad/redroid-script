@@ -55,7 +55,7 @@ class MindTheGapps(General):
         "12.0.0_64only": {
             "x86_64": [
                 "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20240619/MindTheGapps-12.1.0-x86_64-20240619.zip",
-                "05d6e99b6e6567e66d43774559b15fbd"
+                "05d6e99b6e6567e66d43774559b15fbd",
             ],
             "arm64": [
                 "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20240619/MindTheGapps-12.1.0-arm64-20240619.zip",
@@ -65,11 +65,11 @@ class MindTheGapps(General):
         "12.0.0": {
             "x86_64": [
                 "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20240619/MindTheGapps-12.1.0-x86_64-20240619.zip",
-                "05d6e99b6e6567e66d43774559b15fbd"
+                "05d6e99b6e6567e66d43774559b15fbd",
             ],
             "x86": [
                 "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20240619/MindTheGapps-12.1.0-x86-20240619.zip",
-                "ff2421a75afbdda8a003e4fd25e95050"
+                "ff2421a75afbdda8a003e4fd25e95050",
             ],
             "arm64": [
                 "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20240619/MindTheGapps-12.1.0-arm64-20240619.zip",
@@ -106,5 +106,10 @@ class MindTheGapps(General):
             os.makedirs(self.extract_to)
 
         shutil.copytree(
-            os.path.join(self.extract_to, "system", ),
-            os.path.join(self.copy_dir, "system"), dirs_exist_ok=True, )
+            os.path.join(
+                self.extract_to,
+                "system",
+            ),
+            os.path.join(self.copy_dir, "system"),
+            dirs_exist_ok=True,
+        )

@@ -1,88 +1,90 @@
 # Remote-Android Script
 
-This script adds Gapps, Magisk and libndk to redroid **without recompiling the entire image**
-If redroid-script doesn't work, please create an issue
+This tool enables additional modules to be added to a redroid image without necessitating the recompilation of the entire image. 
+
+It supports cross-compilation for creation of arm64 images on amd64 hosts and vice versa.
+
+If redroid-script doesn't work, please create an issue.
 
 ## Dependencies
-- lzip
 
-## Specify container type
+This project depends on the following native dependencies:
 
-Specify container type. Default is docker
+- Python >= 3.11
+- [`lzip`](https://packages.fedoraproject.org/pkgs/lzip/lzip/)
+- [`docker-cli`](https://packages.fedoraproject.org/pkgs/moby-engine/docker-cli/)
 
-option:
-```
- -c {docker,podman}, --container {docker,podman}
-```
+It also has an array of python dependencies.
 
+Please make a virtual environment and install the dependencies from `requirements.txt`.
 
-## Specify an Android version
+Please also note that although this tool requires `docker` with the `buildx` plugin, other container systems `podman` can also be used if a package like [`podman-docker`](https://packages.fedoraproject.org/pkgs/podman/podman-docker/) is installed that provides the docker CLI to a non-docker backend.
 
-Use `-a` or `--android-version` to specify the Android version of the image being pulled. The value can be `8.1.0`, `9.0.0`, `10.0.0`, `11.0.0`, `12.0.0`, `12.0.0_64only` or `13.0.0`. The default is 11.0.0.
+## Configuration
+
+All supported options can be viewed with:
 
 ```bash
-# pull the latest image
-python redroid.py -a 11.0.0
+python3 -m rds --help
 ```
 
-## Add OpenGapps to ReDroid image
+As of writing, this yields:
+
+```bash
+usage: python3 -m rds [-h] [--redroid-image REDROID] [--android-version ANDROID] [--architecture {arm64,amd64}] [--gapps {litegapps,opengapps,mindthegapps}] [-n] [-w]
+
+options:
+  -h, --help            show this help message and exit
+  --redroid-image REDROID
+                        Base image of redroid, excluding any tags. Your docker/podman daemon must be autheticated against this source. Docker hub allows anonymous access, however it is rate limited.
+  --android-version ANDROID
+                        Specify the Android version to build. See valid versions on the tags page of Redroid https://hub.docker.com/r/redroid/redroid/tags
+  --architecture {arm64,amd64}
+                        Specify the architecture you'd like to build the final image for. Does not need to match the host you're running on, but the default is the build host's arch.
+  --gapps {litegapps,opengapps,mindthegapps}
+                        Installs a GMS provider into the final image. You will need to experiment to find the best provider for you.
+  -n, --install-ndk-translation
+                        Install libndk translation files
+  -w, --install-widevine
+                        Integrate Widevine DRM (L3)
+```
+
+## Add GMS to ReDroid image
+
+This project can install various GMS implementations into the redroid images.
+
+Currently supported:
+
+- OpenGapps (Limited support)
+- LiteGapps
+- MindTheGapps
 
 <img src="./assets/3.png" style="zoom:50%;" />
 
-```bash
-python redroid.py -g
-```
-
-## Add liteGapps to ReDroid image
-
-```bash
-python redroid.py -lg
-```
-
-## Add MindTheGapps to ReDroid image
-
-```bash
-python redroid.py -mtg
-```
-
 ## Add libndk arm translation to ReDroid image
+
 <img src="./assets/2.png" style="zoom:50%;" />
 
 libndk_translation from guybrush firmware.
 
 libndk seems to have better performance than libhoudini on AMD.
 
-```bash
-python redroid.py -n
-```
-
 ## Add Magisk to ReDroid image
-<img src="./assets/1.png" style="zoom:50%;" />
 
-Zygisk and modules like LSPosed should work. 
-
-
-
-```bash
-python redroid.py -m
-```
+This project previously supported adding Magisk to the redroid image. This functionality has been removed due to the security implications of exposing root to untrusted processes, which is likely in a remote environment.
 
 ## Add widevine DRM(L3) to ReDroid image
 
-![](assets/4.png)
+Adding Widevine will allow the android device to play some DRM-enabled copyrighted media. Your milage will vary, as different publishers require different levels of Widevine compliance.
 
-```
-python redroid.py -w
-```
-
-
+<img src="./assets/4.png" style="zoom:50%;" />
 
 ## Example
 
-This command will add Gapps, Magisk, Libndk, Widevine to the ReDroid image at the same time.
+This command will add OpenGapps, LibNDK translation, and Widevine to the ReDroid image at the same time.
 
 ```bash
-python redroid.py -a 11.0.0 -gmnw
+python3 -m rds --android 11.0.0-latest --gapps opengapps -nw
 ```
 
 Then start the docker container.
@@ -91,7 +93,7 @@ Then start the docker container.
 docker run -itd --rm --privileged \
     -v ~/data:/data \
     -p 5555:5555 \
-    redroid/redroid:11.0.0-gapps-ndk-magisk-widevine \
+    redroid/redroid:11.0.0_patched_opengapps_ndk_widevine-latest \
 ro.product.cpu.abilist=x86_64,arm64-v8a,x86,armeabi-v7a,armeabi \
     ro.product.cpu.abilist64=x86_64,arm64-v8a \
     ro.product.cpu.abilist32=x86,armeabi-v7a,armeabi \
@@ -104,13 +106,13 @@ ro.product.cpu.abilist=x86_64,arm64-v8a,x86,armeabi-v7a,armeabi \
     ro.ndk_translation.version=0.2.3 \
 ```
 
-If you need to use libndk on `redroid:12.0.0_64only` image, you should start the container with the following command
+If you need to use libndk on `redroid:12.0.0_64only-latest` image, you should start the container with the following command
 
 ```bash
 docker run -itd --rm --privileged \
-    -v ~/data12:/data \
+    -v ~/data:/data \
     -p 5555:5555 \
-    redroid/redroid:12.0.0_64only-ndk \
+    redroid/redroid:12.0.0_64only_patched_ndk_widevine-latest \
     androidboot.use_memfd=1 \
     ro.product.cpu.abilist=x86_64,arm64-v8a \
     ro.product.cpu.abilist64=x86_64,arm64-v8a \
@@ -121,10 +123,6 @@ docker run -itd --rm --privileged \
 
 ## Troubleshooting
 
-- Magisk installed: N/A
-
-  According to some feedback from WayDroid users, changing the kernel may solve this issue. https://t.me/WayDroid/126202
-
 - The device isn't Play Protect certified
     1. Run below command on host
     ```
@@ -134,19 +132,10 @@ docker run -itd --rm --privileged \
     ```
 
     2. Grab device id and register on this website: https://www.google.com/android/uncertified/
-
-- libndk doesn't work
-  
-    I only made it work on `redroid/redroid:11.0.0`. Also, turning on Zygisk seems to break libndk for 32 bit apps, but arm64 apps still work.
-    
-- libhoudini doesn't work
-  
-    I have no idea. I can't get any version of libhoudini to work on redroid.
-
+- Redroid doesn't work on Fedora/RHEL/downstream like Rocky
+    ashmem & memfd are not included in the kernels these distributions provide. Please see the documentation of `redroid` for ways around this. For convenience's sake, the use of the latest Ubuntu LTS version is reccomended. 
 
 ## Credits
 1. [remote-android](https://github.com/remote-android)
 2. [waydroid_script](https://github.com/casualsnek/waydroid_script)
-3. ~~[Magisk Delta](https://huskydg.github.io/magisk-files/)~~
-4. [vendor_intel_proprietary_houdini](https://github.com/supremegamers/vendor_intel_proprietary_houdini)
-5. [Magisk](https://github.com/topjohnwu/Magisk)
+
