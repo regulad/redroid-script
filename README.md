@@ -11,11 +11,8 @@ If redroid-script doesn't work, please create an issue.
 [`regulad`](https://regulad.xyz) maintains a subset of the images this script is capable of creating.
 
 Here are the tags currently available:
-- `12.0.0_64only_patched_mindthegapps-latest`
-- `13.0.0_64only_patched_mindthegapps-latest`
-- `14.0.0_64only_patched_mindthegapps-latest`
-- `15.0.0_64only_patched_mindthegapps-latest`
-- `16.0.0_64only_patched_mindthegapps-latest`
+- `14.0.0_64only_patched_mindthegapps-latest` (`amd64` and `arm64`)
+- `15.0.0_64only_patched_mindthegapps-latest` (`arm64` only)
 
 A live list including legacy tags is available at this URL: https://repo.regulad.xyz/#browse/browse:cr:v2%2Fredroid%2Fredroid%2Ftags
 

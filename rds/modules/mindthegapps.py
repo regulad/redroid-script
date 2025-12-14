@@ -13,39 +13,23 @@ class MindTheGapps(Common):
 
     dl_links = frozendict(
         {
+            "15.0.0": frozendict(
+                {
+                    "arm64": (
+                        "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20250330/MindTheGapps-15.0.0-arm64-20250330.zip",
+                        "79acb62f0f7c66b0f0bcadae5624f3d1",
+                    ),
+                }
+            ),
             "14.0.0": frozendict(
                 {
                     "x86_64": (
-                        "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20240226/MindTheGapps-14.0.0-x86_64-20240226.zip",
-                        "a827a84ccb0cf5914756e8561257ed13",
+                        "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20250330/MindTheGapps-14.0.0-x86_64-20250330.zip",
+                        "f9da567989d18aa33d51cf6faa385798",
                     ),
                     "arm64": (
-                        "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20240226/MindTheGapps-14.0.0-arm64-20240226.zip",
-                        "a0905cc7bf3f4f4f2e3f59a4e1fc789b",
-                    ),
-                }
-            ),
-            "13.0.0": frozendict(
-                {
-                    "x86_64": (
-                        "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20240226/MindTheGapps-13.0.0-x86_64-20240226.zip",
-                        "eee87a540b6e778f3a114fff29e133aa",
-                    ),
-                    "arm64": (
-                        "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20240226/MindTheGapps-13.0.0-arm64-20240226.zip",
-                        "ebdf35e17bc1c22337762fcf15cd6e97",
-                    ),
-                }
-            ),
-            "12.0.0": frozendict(
-                {
-                    "x86_64": (
-                        "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20240619/MindTheGapps-12.1.0-x86_64-20240619.zip",
-                        "05d6e99b6e6567e66d43774559b15fbd",
-                    ),
-                    "arm64": (
-                        "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20240619/MindTheGapps-12.1.0-arm64-20240619.zip",
-                        "94dd174ff16c2f0006b66b25025efd04",
+                        "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20250330/MindTheGapps-14.0.0-arm64-20250330.zip",
+                        "5cf957fb34957153ea8623b37ccf5fcb",
                     ),
                 }
             ),
@@ -64,6 +48,8 @@ class MindTheGapps(Common):
         download_urls_by_architecture = self.dl_links[
             self.image_state["android_major"].split("_")[0]
         ]
+        if android_architecture not in download_urls_by_architecture.keys():
+            raise ValueError("amd64 is not supported in newer versions of MindTheGapps. Switch to arm64.")
         download_url, expected_md5 = download_urls_by_architecture[android_architecture]
 
         with TemporaryDirectory() as extract_to:

@@ -166,7 +166,7 @@ def main() -> None:
         stderr=subprocess.STDOUT,
         stdout=stderr,
         check=True,
-    )
+        )
 
     with TemporaryDirectory() as tempdir:
         # Putting this into a serializable form so it can be accelerated by spawning multiple processes
@@ -199,7 +199,7 @@ def main() -> None:
                 case "mindthegapps":
                     if (
                         android_major
-                        not in ANDROID_12_MAJORS | ANDROID_13_MAJORS | ANDROID_14_MAJORS
+                        not in ANDROID_14_MAJORS | ANDROID_15_MAJORS
                     ):
                         raise ValueError(
                             "MindTheGapps (or this script's MindTheGapps subsystem) does not support this version of Android."
