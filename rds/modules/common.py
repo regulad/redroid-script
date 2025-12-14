@@ -37,76 +37,98 @@ def copy_file(src: Path, dst: Path) -> None:
     src_str = str(src)
     dst_str = str(dst)
 
-    if sys.platform == 'win32':
+    if sys.platform == "win32":
         subprocess.run(
-            ['robocopy', src.parent, dst.parent, src.name, '/DCOPY:DAT', '/COPY:DAT', '/R:3', '/W:1'],
+            [
+                "robocopy",
+                src.parent,
+                dst.parent,
+                src.name,
+                "/DCOPY:DAT",
+                "/COPY:DAT",
+                "/R:3",
+                "/W:1",
+            ],
             check=False,  # robocopy returns non-zero exit codes for success
             stdin=subprocess.DEVNULL,
             stdout=sys.stderr,
-            stderr=subprocess.STDOUT
+            stderr=subprocess.STDOUT,
         )
         # robocopy returns 0-7 for various success conditions, 8+ for errors
         result = subprocess.run(
-            ['robocopy', str(src.parent), str(dst.parent), src.name, '/DCOPY:DAT', '/COPY:DAT', '/R:3', '/W:1', '/NJH', '/NJS'],
+            [
+                "robocopy",
+                str(src.parent),
+                str(dst.parent),
+                src.name,
+                "/DCOPY:DAT",
+                "/COPY:DAT",
+                "/R:3",
+                "/W:1",
+                "/NJH",
+                "/NJS",
+            ],
             stdin=subprocess.DEVNULL,
             stdout=sys.stderr,
-            stderr=subprocess.STDOUT
+            stderr=subprocess.STDOUT,
         )
         if result.returncode >= 8:
             raise subprocess.CalledProcessError(result.returncode, result.args)
-    elif sys.platform == 'linux':
+    elif sys.platform == "linux":
         subprocess.run(
-            ['cp', '--reflink=auto', '--preserve=all', src_str, dst_str],
+            ["cp", "--reflink=auto", "--preserve=all", src_str, dst_str],
             check=True,
             stdin=subprocess.DEVNULL,
             stdout=sys.stderr,
-            stderr=subprocess.STDOUT
+            stderr=subprocess.STDOUT,
         )
-    elif sys.platform == 'darwin':
+    elif sys.platform == "darwin":
         subprocess.run(
-            ['cp', '-c', '-p', src_str, dst_str],
+            ["cp", "-c", "-p", src_str, dst_str],
             check=True,
             stdin=subprocess.DEVNULL,
             stdout=sys.stderr,
-            stderr=subprocess.STDOUT
+            stderr=subprocess.STDOUT,
         )
     else:
         subprocess.run(
-            ['cp', '-p', src_str, dst_str],
+            ["cp", "-p", src_str, dst_str],
             check=True,
             stdin=subprocess.DEVNULL,
             stdout=sys.stderr,
-            stderr=subprocess.STDOUT
+            stderr=subprocess.STDOUT,
         )
 
 
-def download_with_md5(url: str, expected_md5: str, output_folder: str, chunk_size: int = 8192) -> str:
+def download_with_md5(
+    url: str, expected_md5: str, output_folder: str, chunk_size: int = 8192
+) -> str:
     """
     Does what it says on the tin.
-    Obeys content-disposition and returns the filename thereof. 
+    Obeys content-disposition and returns the filename thereof.
     The file will be written into that filename
     """
     # Setup retry strategy
     session = requests.Session()
     retry = Retry(total=3, backoff_factor=0.3)
     adapter = HTTPAdapter(max_retries=retry)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
-    
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
     # Download with streaming MD5
     md5_hash = hashlib.md5()
     response = session.get(url, stream=True)
     response.raise_for_status()
-    
+
     filename = requests_response_to_filename(response)
     output_path = output_folder + os.sep + filename
 
-    with open(output_path, 'wb') as f:
+    with open(output_path, "wb") as f:
         for chunk in response.iter_content(chunk_size=chunk_size):
             if chunk:
                 md5_hash.update(chunk)
                 f.write(chunk)
-    
+
     actual_md5 = md5_hash.hexdigest()
     if actual_md5 != expected_md5:
         raise ValueError(f"MD5 mismatch: expected {expected_md5}, got {actual_md5}")
@@ -114,15 +136,15 @@ def download_with_md5(url: str, expected_md5: str, output_folder: str, chunk_siz
 
 
 def download_from_cache(
-            url: str, 
-            expected_md5: str, 
-            output_folder: str, 
-            *, 
-            readonly: bool = False, 
-            skipcheck: bool = False
-        ) -> str:
+    url: str,
+    expected_md5: str,
+    output_folder: str,
+    *,
+    readonly: bool = False,
+    skipcheck: bool = False,
+) -> str:
     """
-    Downloads an item, opportunistically using the user's cache if possible. 
+    Downloads an item, opportunistically using the user's cache if possible.
     The returned str is the filename within the output_folder.
     """
     # If this flag is set, then we will not attempt caching.
@@ -143,23 +165,34 @@ def download_from_cache(
                     # More than one file exists in this directory! Invalid!
                     maybe_cached_file = None
                     abort_caching = True
-                    warnings.warn("More than one file was in the cache container. Hash collision?", RuntimeWarning)
+                    warnings.warn(
+                        "More than one file was in the cache container. Hash collision?",
+                        RuntimeWarning,
+                    )
                     break
                 if child.exists() and child.is_file() and os.access(child, os.R_OK):
                     maybe_cached_file = child
                 else:
                     # We got one file, and it was invalid.
                     abort_caching = True
-                    warnings.warn("A cache container exists, and its file had bad permissions!", RuntimeWarning)
+                    warnings.warn(
+                        "A cache container exists, and its file had bad permissions!",
+                        RuntimeWarning,
+                    )
                     break
         else:
             abort_caching = True
-            warnings.warn("A cache container exists, but had invalid permissions! Will need to redownload.", RuntimeWarning)
+            warnings.warn(
+                "A cache container exists, but had invalid permissions! Will need to redownload.",
+                RuntimeWarning,
+            )
         if maybe_cached_file is not None and not skipcheck:
             # This file passed the permissions checks.
             # Let's see if it passes the checksum check.
             with open(maybe_cached_file, "rb") as cached_file_fp:
-                hexdigest_of_cached_file = hashlib.file_digest(cached_file_fp, "md5").hexdigest()
+                hexdigest_of_cached_file = hashlib.file_digest(
+                    cached_file_fp, "md5"
+                ).hexdigest()
             if hexdigest_of_cached_file != expected_md5:
                 # Even if we have write permissions, there's no guarantee we have delete permissions.
                 # It's a lot more important here that we get a final file than we have perfect caching.
@@ -173,31 +206,44 @@ def download_from_cache(
             destination_path = output_path / destination_filename
             copy_file(maybe_cached_file, destination_path)
             return destination_filename
-    
+
     # If we had a cached file, we would have returned by now.
     if readonly:
-        raise RuntimeError("This function was called readonly, but the cache was unreadable.")
+        raise RuntimeError(
+            "This function was called readonly, but the cache was unreadable."
+        )
 
     # Now we have to get the file ourselves.
     # If we have sufficient permissions to make a cache file, we'll write to that first and then copy.
     # Else, just read into final directory (probably tmp)
     if not cache_path.exists() and not abort_caching:
-        if os.access(cache_path.parent, os.W_OK | os.R_OK | os.X_OK) \
-                and not os.statvfs(cache_path.parent).f_flag & os.ST_RDONLY:
+        if (
+            os.access(cache_path.parent, os.W_OK | os.R_OK | os.X_OK)
+            and not os.statvfs(cache_path.parent).f_flag & os.ST_RDONLY
+        ):
             cache_path.mkdir()
         else:
-            warnings.warn("Unable to create a cache folder. Will just download without cache.", RuntimeWarning)
+            warnings.warn(
+                "Unable to create a cache folder. Will just download without cache.",
+                RuntimeWarning,
+            )
             abort_caching = True
     if not cache_container.exists() and not abort_caching:
-        if os.access(cache_container.parent, os.W_OK | os.R_OK | os.X_OK) \
-                and not os.statvfs(cache_container.parent).f_flag & os.ST_RDONLY:
-             cache_container.mkdir()
+        if (
+            os.access(cache_container.parent, os.W_OK | os.R_OK | os.X_OK)
+            and not os.statvfs(cache_container.parent).f_flag & os.ST_RDONLY
+        ):
+            cache_container.mkdir()
         else:
-             warnings.warn("Unable to create a cache container. Will download without caching.", RuntimeWarning)
-             abort_caching = True
-    if not abort_caching \
-            and not (os.access(cache_container, os.W_OK | os.R_OK | os.X_OK) \
-                and not os.statvfs(cache_container).f_flag & os.ST_RDONLY):
+            warnings.warn(
+                "Unable to create a cache container. Will download without caching.",
+                RuntimeWarning,
+            )
+            abort_caching = True
+    if not abort_caching and not (
+        os.access(cache_container, os.W_OK | os.R_OK | os.X_OK)
+        and not os.statvfs(cache_container).f_flag & os.ST_RDONLY
+    ):
         # Final check.
         warnings.warn("Can't write into the cache container. Won't cache.")
         abort_caching = True
@@ -208,7 +254,9 @@ def download_from_cache(
         #     that we have permissions to write into it
         # NOTE: A recursive control flow is weird here, but it would work, wouldn't it?
         downloaded_file = download_with_md5(url, expected_md5, str(cache_container))
-        warmcache_file = download_from_cache(url, expected_md5, output_folder, readonly=True, skipcheck=False)
+        warmcache_file = download_from_cache(
+            url, expected_md5, output_folder, readonly=True, skipcheck=False
+        )
         assert downloaded_file == warmcache_file
         return downloaded_file
     else:
@@ -232,4 +280,3 @@ __all__ = (
     "download_from_cache",
     "Common",
 )
-

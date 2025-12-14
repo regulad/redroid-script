@@ -6,7 +6,5 @@ class ImageState(TypedDict):
     android_major: str
     tempdir: str
 
-__all__ = (
-    "ImageState",
-)
 
+__all__ = ("ImageState",)

@@ -9,30 +9,33 @@ from frozendict import frozendict
 from .common import Common, download_from_cache
 
 
-class Gapps(Common):
-    copy_dir_static = "gapps"
+class OpenGapps(Common):
+    copy_dir_static = "opengapps"
 
-    dl_links = frozendict({
-        "x86_64": (
-            "https://cfhcable.dl.sourceforge.net/project/opengapps/x86_64/20220503/open_gapps-x86_64-10.0-pico-20220503.zip",
-            "5fb186bfb7bed8925290f79247bec4cf",
-        ),
-        "arm64-v8a": (
-            "https://versaweb.dl.sourceforge.net/project/opengapps/arm64/20220503/open_gapps-arm64-10.0-pico-20220503.zip?viasf=1",
-            "2feaf25d03530892c6146687ffa08bc2",
-        ),
-    })
+    dl_links = frozendict(
+        {
+            "x86_64": (
+                "https://cfhcable.dl.sourceforge.net/project/opengapps/x86_64/20220503/open_gapps-x86_64-10.0-pico-20220503.zip",
+                "5fb186bfb7bed8925290f79247bec4cf",
+            ),
+            "arm64-v8a": (
+                "https://versaweb.dl.sourceforge.net/project/opengapps/arm64/20220503/open_gapps-arm64-10.0-pico-20220503.zip?viasf=1",
+                "2feaf25d03530892c6146687ffa08bc2",
+            ),
+        }
+    )
 
-    non_apks = frozenset({
-        "defaultetc-common.tar.lz",
-        "defaultframework-common.tar.lz",
-        "googlepixelconfig-common.tar.lz",
-        "vending-common.tar.lz",
-    })
-    skip = frozenset({
-        "setupwizarddefault-x86_64.tar.lz", 
-        "setupwizardtablet-x86_64.tar.lz"
-    })
+    non_apks = frozenset(
+        {
+            "defaultetc-common.tar.lz",
+            "defaultframework-common.tar.lz",
+            "googlepixelconfig-common.tar.lz",
+            "vending-common.tar.lz",
+        }
+    )
+    skip = frozenset(
+        {"setupwizarddefault-x86_64.tar.lz", "setupwizardtablet-x86_64.tar.lz"}
+    )
 
     def install(self) -> None:
         android_architecture: str
@@ -44,10 +47,12 @@ class Gapps(Common):
         assert android_architecture is not None
 
         pulled_url, expected_md5 = self.dl_links[android_architecture]
-        
+
         with TemporaryDirectory() as extract_to:
             with TemporaryDirectory() as download_scratch:
-                zipfile_filename = download_from_cache(pulled_url, expected_md5, download_scratch)
+                zipfile_filename = download_from_cache(
+                    pulled_url, expected_md5, download_scratch
+                )
                 with zipfile.ZipFile(download_scratch + os.sep + zipfile_filename) as z:
                     z.extractall(extract_to)
 
@@ -57,7 +62,7 @@ class Gapps(Common):
             for lz_file in os.listdir(os.path.join(extract_to, "Core")):
                 for d in os.listdir(os.path.join(extract_to, "appunpack")):
                     shutil.rmtree(os.path.join(extract_to, "appunpack", d))
-            
+
                 if lz_file not in self.skip:
                     if lz_file not in self.non_apks:
                         run(
@@ -68,7 +73,8 @@ class Gapps(Common):
                                 os.path.join(extract_to, "Core", lz_file),
                                 "-C",
                                 os.path.join(extract_to, "appunpack"),
-                            ]
+                            ],
+                            check=True,
                         )
                         app_name = os.listdir(os.path.join(extract_to, "appunpack"))[0]
                         xx_dpi = os.listdir(
@@ -95,7 +101,8 @@ class Gapps(Common):
                                 os.path.join(extract_to, "Core", lz_file),
                                 "-C",
                                 os.path.join(extract_to, "appunpack"),
-                            ]
+                            ],
+                            check=True,
                         )
                         app_name = os.listdir(os.path.join(extract_to, "appunpack"))[0]
                         common_content_dirs = os.listdir(
@@ -105,7 +112,10 @@ class Gapps(Common):
                             shutil.copytree(
                                 os.path.join(
                                     extract_to, "appunpack", app_name, "common", ccdir
-                                     ),
+                                ),
                                 os.path.join(self.copy_dir, "system", ccdir),
                                 dirs_exist_ok=True,
                             )
+
+
+__all__ = ("OpenGapps",)

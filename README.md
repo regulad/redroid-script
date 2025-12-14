@@ -6,6 +6,21 @@ It supports cross-compilation for creation of arm64 images on amd64 hosts and vi
 
 If redroid-script doesn't work, please create an issue.
 
+## Premade downloads
+
+[`regulad`](https://regulad.xyz) maintains a subset of the images this script is capable of creating.
+
+Here are the tags currently available:
+- `12.0.0_64only_patched_mindthegapps-latest`
+- `13.0.0_64only_patched_mindthegapps-latest`
+- `14.0.0_64only_patched_mindthegapps-latest`
+- `15.0.0_64only_patched_mindthegapps-latest`
+- `16.0.0_64only_patched_mindthegapps-latest`
+
+A live list including legacy tags is available at this URL: https://repo.regulad.xyz/#browse/browse:cr:v2%2Fredroid%2Fredroid%2Ftags
+
+Please use `cr.regulad.xyz/redroid/redroid` to access the images from docker.
+
 ## Dependencies
 
 This project depends on the following native dependencies:
@@ -41,12 +56,8 @@ options:
                         Specify the Android version to build. See valid versions on the tags page of Redroid https://hub.docker.com/r/redroid/redroid/tags
   --architecture {arm64,amd64}
                         Specify the architecture you'd like to build the final image for. Does not need to match the host you're running on, but the default is the build host's arch.
-  --gapps {litegapps,opengapps,mindthegapps}
+  --gapps {litegapps,mindthegapps}
                         Installs a GMS provider into the final image. You will need to experiment to find the best provider for you.
-  -n, --install-ndk-translation
-                        Install libndk translation files
-  -w, --install-widevine
-                        Integrate Widevine DRM (L3)
 ```
 
 ## Add GMS to ReDroid image
@@ -61,23 +72,13 @@ Currently supported:
 
 <img src="./assets/3.png" style="zoom:50%;" />
 
-## Add libndk arm translation to ReDroid image
-
-<img src="./assets/2.png" style="zoom:50%;" />
-
-libndk_translation from guybrush firmware.
-
-libndk seems to have better performance than libhoudini on AMD.
-
-## Add Magisk to ReDroid image
+## Removed features
 
 This project previously supported adding Magisk to the redroid image. This functionality has been removed due to the security implications of exposing root to untrusted processes, which is likely in a remote environment.
 
-## Add widevine DRM(L3) to ReDroid image
+This project also previously supported adding Widevine proprietary blobs. This functionality has been removed for legal reasons.
 
-Adding Widevine will allow the android device to play some DRM-enabled copyrighted media. Your milage will vary, as different publishers require different levels of Widevine compliance.
-
-<img src="./assets/4.png" style="zoom:50%;" />
+Finally, this project once supported installing the libndk and libhoudini amd64 -> arm64 translation layers. However, as the main target of this project has shifted to arm64, these have been removed to keep development nimble.
 
 ## Example
 

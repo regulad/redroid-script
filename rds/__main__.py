@@ -7,11 +7,8 @@ from tempfile import TemporaryDirectory
 from warnings import warn
 
 from .state import ImageState
-from .modules.gapps import Gapps
-#from .modules.litegapps import LiteGapps
-#from .modules.mindthegapps import MindTheGapps
-#from .modules.ndk import Ndk
-#from .modules.widevine import Widevine
+from .modules.opengapps import OpenGapps
+from .modules.mindthegapps import MindTheGapps
 
 
 ANDROID_9_MAJORS = frozenset(
@@ -126,29 +123,10 @@ def main() -> None:
         "You will need to experiment to find the best provider for you, "
         "but mindthegapps is STRONGLY reccomended for stability.",
         default=None,
-        choices={"opengapps", "litegapps", "mindthegapps"},
-    )
-
-    parser.add_argument(
-        "-n",
-        "--install-ndk-translation",
-        dest="ndk",
-        help="Install libndk translation files",
-        action="store_true",
-    )
-
-    parser.add_argument(
-        "-w",
-        "--install-widevine",
-        dest="widevine",
-        help="Integrate Widevine DRM (L3)",
-        action="store_true",
+        choices={"opengapps", "mindthegapps"},
     )
 
     args = parser.parse_args()
-
-    if args.ndk and args.architecture != "amd64":
-        raise ValueError("NDK translation is for amd64 hosts.")
 
     android_major, redroid_revision = args.android.split("-")
     android_features = frozenset(android_major.split("_")[1:])
@@ -207,39 +185,29 @@ def main() -> None:
 
             match args.gapps:
                 case "opengapps":
-                    if android_major not in ANDROID_9_MAJORS | ANDROID_10_MAJORS | ANDROID_11_MAJORS:
-                        raise ValueError("OpenGapps only supports max Android 11. Future versions must use a different GMS.")
-                    gapps = Gapps(image_state)
-                    gapps.install()
-                    dockerfile_fp.write(f"COPY {gapps.copy_dir_static} /\n")
-                    tag_modifiers.append(gapps.copy_dir_static)
-                case "litegapps":
-                    warnings.warn("litegapps is depreciated as it has no docuemntation available.", DeprecationWarning)
-                    litegapps = LiteGapps(image_state)
-                    litegapps.install()
-                    dockerfile_fp.write(f"COPY {litegapps.copy_dir_static} /\n")
-                    tag_modifiers.append(litegapps.copy_dir_static)
+                    if (
+                        android_major
+                        not in ANDROID_9_MAJORS | ANDROID_10_MAJORS | ANDROID_11_MAJORS
+                    ):
+                        raise ValueError(
+                            "OpenGapps only supports max Android 11. Future versions must use a different GMS."
+                        )
+                    opengapps = OpenGapps(image_state)
+                    opengapps.install()
+                    dockerfile_fp.write(f"COPY {opengapps.copy_dir_static} /\n")
+                    tag_modifiers.append(opengapps.copy_dir_static)
                 case "mindthegapps":
+                    if (
+                        android_major
+                        not in ANDROID_12_MAJORS | ANDROID_13_MAJORS | ANDROID_14_MAJORS
+                    ):
+                        raise ValueError(
+                            "MindTheGapps (or this script's MindTheGapps subsystem) does not support this version of Android."
+                        )
                     mtg = MindTheGapps(image_state)
                     mtg.install()
                     dockerfile_fp.write(f"COPY {mtg.copy_dir_static} /\n")
                     tag_modifiers.append(mtg.copy_dir_static)
-
-            if args.ndk:
-                if android_major not in ANDROID_11_MAJORS | ANDROID_12_MAJORS:
-                    raise ValueError(
-                        "Libndk has not been tested against the requested version."
-                    )
-                ndk = Ndk(image_state)
-                ndk.install()
-                dockerfile_fp.write(f"COPY {ndk.copy_dir_static} /\n")
-                tag_modifiers.append(ndk.copy_dir_static)
-
-            if args.widevine:
-                widevine = Widevine(image_state)
-                Widevine.install()
-                dockerfile_fp.write("COPY {widevine.copy_dir_static} /\n")
-                tag_modifiers.append(widevine.copy_dir_static)
 
         patched_redroid_tag = f"{args.redroid}:{android_major}_{'_'.join(tag_modifiers)}-{redroid_revision}"
         subprocess.run(
