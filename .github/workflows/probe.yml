@@ -1,0 +1,68 @@
+# Throwaway: does each GitHub-hosted runner offer KVM, and can it boot Ubuntu
+# 22.04's 5.15 kernel (the newest with ashmem) under KVM?
+name: Probe nested virtualization
+on:
+  push:
+    branches: [probe/nested-virt]
+permissions:
+  contents: read
+jobs:
+  probe:
+    name: ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04-arm, ubuntu-22.04-arm, ubuntu-24.04, ubuntu-22.04]
+    steps:
+      - name: Host
+        run: |
+          uname -a
+          lscpu | grep -E 'Architecture|Model name|Vendor|Hypervisor|Virtualization|Flags' | cut -c1-200 || true
+          echo "--- /dev/kvm:"; ls -l /dev/kvm || echo "no /dev/kvm"
+          echo "--- kvm in dmesg:"; sudo dmesg | grep -i -E 'kvm|hyp mode|el2|vgic|nested' | head -20 || true
+          echo "--- kvm modules:"; lsmod | grep -i kvm || true
+
+      - name: KVM API
+        run: |
+          sudo chmod 666 /dev/kvm 2>/dev/null || true
+          python3 - <<'PY'
+          import fcntl, os
+          KVM_GET_API_VERSION, KVM_CREATE_VM, KVM_CHECK_EXTENSION = 0xAE00, 0xAE01, 0xAE03
+          try:
+              fd = os.open("/dev/kvm", os.O_RDWR | os.O_CLOEXEC)
+          except OSError as e:
+              raise SystemExit(f"cannot open /dev/kvm: {e}")
+          print("KVM_GET_API_VERSION:", fcntl.ioctl(fd, KVM_GET_API_VERSION))
+          vm = fcntl.ioctl(fd, KVM_CREATE_VM, 0)
+          print("KVM_CREATE_VM: ok, fd", vm)
+          PY
+
+      - name: Boot Ubuntu 22.04's 5.15 kernel under KVM
+        run: |
+          set -euo pipefail
+          arch=$(dpkg --print-architecture)
+          sudo apt-get update -q
+          if [ "$arch" = arm64 ]; then
+            sudo apt-get install -y -q qemu-system-arm qemu-efi-aarch64 >/dev/null
+            qemu=(qemu-system-aarch64 -machine virt,gic-version=max -cpu host); console=ttyAMA0
+          else
+            sudo apt-get install -y -q qemu-system-x86 >/dev/null
+            qemu=(qemu-system-x86_64 -machine q35 -cpu host); console=ttyS0
+          fi
+          base=https://cloud-images.ubuntu.com/jammy/current/unpacked
+          curl -fsSL -o vmlinuz "$base/jammy-server-cloudimg-$arch-vmlinuz-generic"
+          curl -fsSL -o initrd "$base/jammy-server-cloudimg-$arch-initrd-generic"
+          start=$(date +%s.%N)
+          # No root disk: the guest panics or drops to the initramfs shell once
+          # the kernel is up, which is as far as this needs to go.
+          timeout 90 "${qemu[@]}" -accel kvm -smp 2 -m 1024 -nographic -no-reboot \
+            -kernel vmlinuz -initrd initrd -append "console=$console panic=-1" \
+            > boot.log 2>&1 || true
+          end=$(date +%s.%N)
+          grep -a -m1 'Linux version' boot.log || echo "kernel never printed its version"
+          grep -a -m3 -i -E 'kvm|failed to initialize|accel|could not access' boot.log || true
+          tail -n 5 boot.log
+          awk -v s="$start" -v e="$end" 'BEGIN { printf "elapsed: %.1f s\n", e - s }'
+          grep -a -q 'Linux version 5.15' boot.log
