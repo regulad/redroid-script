@@ -85,7 +85,8 @@ were and are not rebuilt.
   booting. It then checks:
   - Play services, Google Services Framework and the Play Store are installed
     as system apps.
-  - None of them crashes while they start up.
+  - None of them crashes while they start up, and system_server does not
+    restart.
   - On amd64, the native bridge is set up and registered with binfmt_misc.
 - **Images boot on ashmem, never memfd.** Android 16 only uses memfd if the
   kernel lets memfds answer ashmem's ioctls, which only Android's own kernels
@@ -96,7 +97,9 @@ were and are not rebuilt.
   Its disk is made once from a pinned cloud image ([`vm/`](vm/)) and cached.
   amd64 images boot under KVM. arm64 images are emulated by QEMU, because
   GitHub's Arm runners have no KVM, and emulating on x64 measured faster.
-  Every job therefore runs on an x64 runner.
+  Every job therefore runs on an x64 runner. Emulated, Android runs with
+  `ro.hw_timeout_multiplier=5`, which Android provides for slow emulators: it
+  stretches timeouts such as system_server's watchdog's.
 - **One failure holds back only its own image.** An image is tagged only when
   both its architectures built and booted.
 - **The tagged images are signed** with cosign, keyless, through GitHub's

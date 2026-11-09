@@ -67,8 +67,10 @@ jobs:
       # Without one (a fork, or before the secrets are set) everything else
       # still runs.
       #
-      # Emulated arm64 boots get hours rather than minutes, and more time for
-      # Google apps to start before the crash log is read.
+      # Emulated arm64 boots get hours rather than minutes, more time for
+      # Google apps to start before the crash log is read, and Android's
+      # timeouts, its watchdog's among them, stretched five times, as Android
+      # provides for slow emulators.
       - id: plan
         env:
           ONLY: ${{ inputs.android }}
@@ -86,8 +88,8 @@ jobs:
             | .platforms | to_entries[]
             | {android: $android, arch: .key, native_bridge: .value.native_bridge}
             + (if .key == "arm64"
-               then {boot_timeout: 14400, settle: 900, timeout: 340}
-               else {boot_timeout: 900, settle: 90, timeout: 60} end)
+               then {boot_timeout: 14400, settle: 900, timeout: 340, android_args: "ro.hw_timeout_multiplier=5"}
+               else {boot_timeout: 900, settle: 90, timeout: 60, android_args: ""} end)
           ]' matrix.json)
           publish=false
           if [ "$WANT_PUBLISH" = true ]; then
@@ -219,6 +221,7 @@ jobs:
           SMOKE_PUBLISH: 0.0.0.0
           BOOT_TIMEOUT: ${{ matrix.boot_timeout }}
           SETTLE_SECONDS: ${{ matrix.settle }}
+          SMOKE_ANDROID_ARGS: ${{ matrix.android_args }}
         run: scripts/smoke-test.sh "redroid-script:$ANDROID-$ARCH" "${{ matrix.native_bridge }}" "$ANDROID"
 
       - name: Stop the VM

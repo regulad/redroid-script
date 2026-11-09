@@ -15,11 +15,14 @@
 # container runs privileged, as redroid must, as redroid-smoke, and is removed
 # afterwards.
 #
+# SMOKE_ANDROID_ARGS adds arguments to the container's: CI emulates arm64, and
+# gives it ro.hw_timeout_multiplier, which Android has for slow emulators.
+#
 # It passes when:
 #   - Android finishes booting within BOOT_TIMEOUT (600) seconds.
 #   - Play services, Google Services Framework and the Play Store are
-#     installed as system apps, and none crashes in the next
-#     SETTLE_SECONDS (90).
+#     installed as system apps, and in the next SETTLE_SECONDS (90) none
+#     crashes and system_server does not restart.
 #   - For builtin or houdini, the ARM native bridge is configured and its
 #     binfmt_misc handler registered.
 set -euo pipefail
@@ -57,9 +60,10 @@ on_host test -c /dev/ashmem \
 on_host sh -c 'test -e /dev/binder || grep -qw binder /proc/filesystems' \
   || fail "the Docker host's kernel ($kernel) has no binder; load binder_linux"
 
+read -ra android_args <<<"${SMOKE_ANDROID_ARGS:-}"
 on_host docker rm -f "$name" >/dev/null 2>&1 || true
 on_host docker run -d --privileged --name "$name" -p "$publish:${ADB_PORT:-5555}:5555" "$image" \
-  androidboot.redroid_gpu_mode=guest >/dev/null
+  androidboot.redroid_gpu_mode=guest "${android_args[@]}" >/dev/null
 
 sh_() { timeout 60 adb -s "$serial" shell "$@" | tr -d '\r'; }
 
@@ -82,6 +86,7 @@ until [ "$(sh_ id -u 2>/dev/null || true)" = 0 ]; do
   timeout 10 adb connect "$serial" >/dev/null 2>&1 || true
   sleep 2
 done
+system_pid=$(sh_ pidof system_server || true)
 
 for package in com.google.android.gms com.google.android.gsf com.android.vending; do
   path=$(sh_ pm path "$package" || true)
@@ -96,20 +101,24 @@ done
 echo "letting Google apps run for ${settle}s"
 sleep "$settle"
 crash_log=$(timeout 30 adb -s "$serial" logcat -b crash -d -v threadtime 2>/dev/null | tr -d '\r' || true)
-# google_crashes count|trace: reads the crash buffer (threadtime: date, time,
-# PID, ...) for Google apps' crashes. A Java crash is logged by the crashing
-# process ("Process: <name>, PID: <pid>"), a native one by crash_dump
-# (">>> <name> <<<"), each under its own PID. "count" prints how often each
-# app crashed. "trace" prints every line of each app's first crash, however
-# much else, such as other apps' crashes or a crash loop, fills the buffer.
-google_crashes() {
+# crashes_of count|trace <regex>: reads the crash buffer (threadtime: date,
+# time, PID, ...) for the crashes of processes whose names match <regex>. A
+# Java crash is logged by the crashing process ("Process: <name>, PID: <pid>",
+# or for system_server "FATAL EXCEPTION IN SYSTEM PROCESS"), a native one by
+# crash_dump (">>> <name> <<<"), each under its own PID. "count" prints how
+# often each process crashed. "trace" prints every line of each one's first
+# crash, however much else, such as a crash loop, fills the buffer.
+crashes_of() {
   # shellcheck disable=SC2016  # awk's own $fields
-  awk -v mode="$1" '
+  # The regex goes in through the environment: -v would take its backslashes
+  # as escapes.
+  NAMES=$2 awk -v mode="$1" '
     NR == FNR {
       name = ""
       if (match($0, /Process: [^,]+/)) name = substr($0, RSTART + 9, RLENGTH - 9)
       else if (match($0, />>> [^ ]+ <<</)) name = substr($0, RSTART + 4, RLENGTH - 8)
-      if (name !~ /^(com\.google\.|com\.android\.vending)/) next
+      else if ($0 ~ /FATAL EXCEPTION IN SYSTEM PROCESS/) name = "system_server"
+      if (name == "" || name !~ ENVIRON["NAMES"]) next
       if (!(name in first)) first[name] = $3
       count[name]++
       next
@@ -121,9 +130,25 @@ google_crashes() {
     $3 in want
   ' <(printf '%s\n' "$crash_log") <(printf '%s\n' "$crash_log")
 }
-crashes=$(google_crashes count | sort)
+
+# When system_server dies, every app dies with it (DeadSystemException), so
+# its own death is the one to report. A crash leaves its trace in the crash
+# buffer; the watchdog, which kills it when it stops responding, logs to the
+# system buffer instead.
+now_pid=$(sh_ pidof system_server || true)
+if [ "$now_pid" != "$system_pid" ]; then
+  echo "::group::why system_server restarted"
+  crashes_of trace '^system_server$'
+  timeout 60 adb -s "$serial" logcat -d -b system -v threadtime 2>/dev/null | tr -d '\r' \
+    | grep -E ' (Watchdog|WatchdogDiagnostics) *:' | head -n 200 || true
+  echo "::endgroup::"
+  fail "system_server restarted in the ${settle}s after boot (pid ${system_pid:-?}, now ${now_pid:-none})"
+fi
+
+google='^(com\.google\.|com\.android\.vending)'
+crashes=$(crashes_of count "$google" | sort)
 if [ -n "$crashes" ]; then
-  echo "::group::the first crash of each Google app"; google_crashes trace; echo "::endgroup::"
+  echo "::group::the first crash of each Google app"; crashes_of trace "$google"; echo "::endgroup::"
   fail "Google apps crashed after boot: $(paste -sd ';' <<<"$crashes" | sed 's/;/; /g')"
 fi
 echo "no Google app crashed in ${settle}s"
