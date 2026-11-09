@@ -88,6 +88,16 @@ until [ "$(sh_ id -u 2>/dev/null || true)" = 0 ]; do
 done
 system_pid=$(sh_ pidof system_server || true)
 
+# A property argument redroid did not take would be ignored without a word.
+for arg in "${android_args[@]}"; do
+  case "$arg" in
+    *=*)
+      got=$(sh_ getprop "${arg%%=*}" || true)
+      [ "$got" = "${arg#*=}" ] || fail "$arg did not take: ${arg%%=*} is '$got'"
+      ;;
+  esac
+done
+
 for package in com.google.android.gms com.google.android.gsf com.android.vending; do
   path=$(sh_ pm path "$package" || true)
   case "$path" in

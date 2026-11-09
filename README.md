@@ -100,8 +100,12 @@ were and are not rebuilt.
   amd64 images boot under KVM. arm64 images are emulated by QEMU, because
   GitHub's Arm runners have no KVM, and emulating on x64 measured faster.
   Every job therefore runs on an x64 runner. Emulated, Android runs with
-  `ro.hw_timeout_multiplier=5`, which Android provides for slow emulators: it
-  stretches timeouts such as system_server's watchdog's.
+  `ro.hw_timeout_multiplier=10`, which Android provides for slow emulators: it
+  stretches timeouts such as system_server's watchdog's, from one minute to
+  ten. At five, the watchdog still now and then killed system_server while
+  Play services set itself up after boot, and the thread it named was idle
+  again by the time its stack was dumped: slowness, not a deadlock. amd64
+  images keep Android's own timeouts.
 - **One failure holds back only its own image.** An image is tagged only when
   both its architectures built and booted.
 - **The tagged images are signed** with cosign, keyless, through GitHub's

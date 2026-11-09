@@ -88,7 +88,7 @@ jobs:
             | .platforms | to_entries[]
             | {android: $android, arch: .key, native_bridge: .value.native_bridge}
             + (if .key == "arm64"
-               then {boot_timeout: 14400, settle: 900, timeout: 340, android_args: "ro.hw_timeout_multiplier=5"}
+               then {boot_timeout: 14400, settle: 900, timeout: 340, android_args: "ro.hw_timeout_multiplier=10"}
                else {boot_timeout: 900, settle: 90, timeout: 60, android_args: ""} end)
           ]' matrix.json)
           publish=false
