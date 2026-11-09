@@ -68,10 +68,13 @@ were and are not rebuilt.
   they are on Docker Hub.
 - **Every image is booted before it's published.**
   [`scripts/smoke-test.sh`](scripts/smoke-test.sh) waits for Android to finish
-  booting. It then checks that Play services and the Play Store are installed
-  as system apps and, on amd64, that the native bridge is set up and
-  registered with binfmt_misc. Each image is built and booted on a runner of
-  its own architecture.
+  booting. It then checks:
+  - Play services, Google Services Framework and the Play Store are installed
+    as system apps.
+  - None of them crashes in the next 90 seconds.
+  - On amd64, the native bridge is set up and registered with binfmt_misc.
+
+  Each image is built and booted on a runner of its own architecture.
 - **One failure holds back only its own image.** An image is tagged only when
   both its architectures built and booted.
 - **The tagged images are signed** with cosign, keyless, through GitHub's
@@ -116,7 +119,7 @@ You need Docker with buildx, `jq` and `git`:
 ```sh
 scripts/build.sh 16.0.0_64only amd64 --print   # the resolved inputs
 scripts/build.sh 16.0.0_64only amd64 --load    # -> redroid-script:16.0.0_64only-amd64
-scripts/smoke-test.sh redroid-script:16.0.0_64only-amd64 houdini
+scripts/smoke-test.sh redroid-script:16.0.0_64only-amd64 houdini 16.0.0_64only
 ```
 
 ## Verifying a signature

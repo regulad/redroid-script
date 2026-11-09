@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # Boots an image and checks what it was built to have.
 #
-#   scripts/smoke-test.sh <image> <native_bridge>
+#   scripts/smoke-test.sh <image> <native_bridge> <android>
 #
-# <native_bridge> is that platform's value in matrix.json: none, builtin or
-# houdini. Needs a Linux host whose kernel has binder (binder_linux or
-# binderfs), root through sudo, Docker and adb. The image runs privileged, as
-# redroid must, under the name redroid-smoke, which is removed afterwards.
+# <native_bridge> is that platform's value in matrix.json (none, builtin or
+# houdini) and <android> the image's redroid variant. Needs a Linux host whose
+# kernel has binder (binder_linux or binderfs), and, for Android 16, ashmem;
+# root through sudo, Docker and adb. The image runs privileged, as redroid
+# must, under the name redroid-smoke, which is removed afterwards.
 #
-# It passes when Android finishes booting, Google Play services and the Play
-# Store are installed as system apps, and, for builtin or houdini, the ARM
-# native bridge is configured and its binfmt_misc handler registered.
+# It passes when Android finishes booting; Play services, Google Services
+# Framework and the Play Store are installed as system apps and do not crash in
+# the next SETTLE_SECONDS (90); and, for builtin or houdini, the ARM native
+# bridge is configured and its binfmt_misc handler registered.
 set -euo pipefail
 
-image=$1 bridge=$2
+image=$1 bridge=$2 android=$3
 name=redroid-smoke
 boot_timeout=${BOOT_TIMEOUT:-600}
 
@@ -32,6 +34,14 @@ trap cleanup EXIT
 if ! grep -qw binder /proc/filesystems && [ ! -e /dev/binder ]; then
   sudo modprobe binder_linux devices=binder,hwbinder,vndbinder \
     || fail "this kernel ($(uname -r)) has no binder, which redroid needs"
+fi
+
+# memfd stands in for ashmem up to Android 15, but redroid 16's SurfaceFlinger
+# aborts at boot ("output buffer not gpu writeable") without /dev/ashmem:
+# remote-android/redroid-doc#934. Say so now rather than after a 10-minute
+# boot loop.
+if [ "${android%%.*}" -ge 16 ] && [ ! -e /dev/ashmem ]; then
+  fail "Android $android needs /dev/ashmem, which this kernel ($(uname -r)) does not have (redroid-doc#934)"
 fi
 
 docker rm -f "$name" >/dev/null 2>&1 || true
@@ -63,13 +73,26 @@ until [ "$(sh_ id -u 2>/dev/null || true)" = 0 ]; do
   sleep 2
 done
 
-for package in com.google.android.gms com.android.vending; do
+for package in com.google.android.gms com.google.android.gsf com.android.vending; do
   path=$(sh_ pm path "$package" || true)
   case "$path" in
     package:/system/*|package:/product/*|package:/system_ext/*) echo "$package: ${path#package:}" ;;
     *) fail "$package is not installed as a system app (pm path said: ${path:-nothing})" ;;
   esac
 done
+
+# Installed is not working: a GApps package that does not fit the base boots,
+# then crash-loops. Give Play services time to start, then read the crash log.
+settle=${SETTLE_SECONDS:-90}
+echo "letting Google apps run for ${settle}s"
+sleep "$settle"
+crashes=$(timeout 30 adb -s "$serial" logcat -b crash -d 2>/dev/null | tr -d '\r' \
+  | grep -E '^.*Process: (com\.google\.|com\.android\.vending)' | sed -E 's/.*Process: //' | sort | uniq -c || true)
+if [ -n "$crashes" ]; then
+  echo "::group::crash log"; timeout 30 adb -s "$serial" logcat -b crash -d 2>&1 | tail -n 150 || true; echo "::endgroup::"
+  fail "Google apps crashed after boot: $(echo "$crashes" | tr '\n' ';')"
+fi
+echo "no Google app crashed in ${settle}s"
 
 if [ "$bridge" != none ]; then
   nb=$(sh_ getprop ro.dalvik.vm.native.bridge)
@@ -84,8 +107,16 @@ if [ "$bridge" != none ]; then
   if [ "$bridge" = houdini ]; then
     # ${LIB} is the linker's own variable, meant literally.
     # shellcheck disable=SC2016
-    sh_ cat /linkerconfig/ld.config.txt | grep -qF '/system/${LIB}/arm64/nb' \
-      || fail "the houdini linker-namespace patch is not in /linkerconfig/ld.config.txt"
+    if ! sh_ cat /linkerconfig/ld.config.txt | grep -qF '/system/${LIB}/arm64/nb'; then
+      echo "::group::why the linker-namespace patch is missing"
+      sh_ ls -l /system/bin/patch /system/etc/ld_config.patch /linkerconfig/ld.config.txt || true
+      sh_ dmesg | grep -i -E 'ld_config|patch|exec' | tail -n 20 || true
+      # A dry run shows which hunks no longer match this base.
+      sh_ /system/bin/patch --dry-run /linkerconfig/ld.config.txt /system/etc/ld_config.patch || true
+      sh_ grep -n -E '^namespace\.default\.(search|permitted)\.paths' /linkerconfig/ld.config.txt | head -n 40 || true
+      echo "::endgroup::"
+      fail "the houdini linker-namespace patch is not in /linkerconfig/ld.config.txt"
+    fi
   fi
   echo "native bridge ($bridge): libnb.so -> $(sh_ readlink /system/lib64/libnb.so), arm64_dyn registered"
 fi
