@@ -145,8 +145,18 @@ if [ "$now_pid" != "$system_pid" ]; then
   fail "system_server restarted in the ${settle}s after boot (pid ${system_pid:-?}, now ${now_pid:-none})"
 fi
 
+# DroidGuard, the anti-abuse code Play services downloads from Google at run
+# time, runs in a process of its own, com.google.android.gms.unstable, so that
+# its crashes end there. It is not in the image, and crashes now and then:
+# its crashes are shown, not failed on.
+droidguard='^com\.google\.android\.gms\.unstable$'
+if [ -n "$(crashes_of count "$droidguard")" ]; then
+  echo "::warning::DroidGuard (com.google.android.gms.unstable) crashed after boot; not counted"
+  echo "::group::DroidGuard's first crash"; crashes_of trace "$droidguard"; echo "::endgroup::"
+fi
+
 google='^(com\.google\.|com\.android\.vending)'
-crashes=$(crashes_of count "$google" | sort)
+crashes=$(crashes_of count "$google" | grep -v ' com\.google\.android\.gms\.unstable$' | sort || true)
 if [ -n "$crashes" ]; then
   echo "::group::the first crash of each Google app"; crashes_of trace "$google"; echo "::endgroup::"
   fail "Google apps crashed after boot: $(paste -sd ';' <<<"$crashes" | sed 's/;/; /g')"

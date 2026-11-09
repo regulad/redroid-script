@@ -86,7 +86,9 @@ were and are not rebuilt.
   - Play services, Google Services Framework and the Play Store are installed
     as system apps.
   - None of them crashes while they start up, and system_server does not
-    restart.
+    restart. DroidGuard is the exception: Play services downloads it from
+    Google at run time and runs it in a process of its own, where it crashes
+    now and then. Its crashes are shown as warnings.
   - On amd64, the native bridge is set up and registered with binfmt_misc.
 - **Images boot on ashmem, never memfd.** Android 16 only uses memfd if the
   kernel lets memfds answer ashmem's ioctls, which only Android's own kernels
