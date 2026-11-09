@@ -265,9 +265,12 @@ jobs:
             base_diff_id: sha256:fdfeb94a3ddacdb0ffdb897cce695df582ae0d4c2b6cefadb0ca772ab84e4d5e
             original_layer: sha256:26243ec0c8503e973c4cd1881d3b469b7320cd27494158365ecf8213fafd76ec
     env:
-      XDG_CACHE_HOME: ${{ runner.temp }}/cache
       IMAGE: redroid/redroid:12.0.0_gapps
     steps:
+      # Where the script keeps its downloads. Set here because a job's env
+      # cannot see the runner context.
+      - run: echo "XDG_CACHE_HOME=$RUNNER_TEMP/cache" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: legacy/2024-07-22
