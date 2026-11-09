@@ -36,6 +36,7 @@ cell=$(jq -ce --arg android "$android" --arg arch "$arch" '
   | ($image // error("no image \($android) in matrix.json"))
   | ($image.platforms[$arch] // error("\($android) has no \($arch) build")) as $p
   | ($m.gapps[$p.gapps] // error("unknown gapps \($p.gapps)")) as $g
+  | (if $p.addon then ($m.gapps[$p.addon] // error("unknown addon \($p.addon)")) else null end) as $a
   | {
       android: $android,
       arch: $arch,
@@ -47,6 +48,10 @@ cell=$(jq -ce --arg android "$android" --arg arch "$arch" '
       gapps_url: $g.url,
       gapps_sha256: $g.sha256,
       litegapps_tree: ($g.tree // ""),
+      addon_file: ($a.file // ""),
+      addon_url: ($a.url // ""),
+      addon_sha256: ($a.sha256 // ""),
+      busybox: $m.busybox,
       native_bridge: $p.native_bridge,
       houdini: $m.houdini,
       hack: $m.houdini_hack
@@ -72,15 +77,20 @@ fi
 export SOURCE_DATE_EPOCH
 revision=$(git rev-parse HEAD)
 base=$(field base)
+gapps_files=$(field gapps_file)
+[ -z "$(field addon_file)" ] || gapps_files="$gapps_files + $(field addon_file)"
 
 args=(
   --platform "linux/$arch"
   --build-arg "BASE=$base"
   --build-arg "TOOLS=$(field tools)"
+  --build-arg "BUSYBOX=$(field busybox)"
   --build-arg "GAPPS_KIND=$(field gapps_kind)"
   --build-arg "GAPPS_URL=$(field gapps_url)"
   --build-arg "GAPPS_SHA256=$(field gapps_sha256)"
   --build-arg "LITEGAPPS_TREE=$(field litegapps_tree)"
+  --build-arg "ADDON_URL=$(field addon_url)"
+  --build-arg "ADDON_SHA256=$(field addon_sha256)"
   --build-arg "NATIVE_BRIDGE=$target_bridge"
   --build-arg "HOUDINI_REPO=$(field houdini.repo)"
   --build-arg "HOUDINI_COMMIT=$(field houdini.commit)"
@@ -89,12 +99,12 @@ args=(
   --build-arg "HACK_ANDROID=${android%%_*}"
   --build-arg "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH"
   --label "org.opencontainers.image.title=redroid $android with Google apps"
-  --label "org.opencontainers.image.description=redroid/redroid $android with $(field gapps_file); ARM translation: $bridge_label"
+  --label "org.opencontainers.image.description=redroid/redroid $android with $gapps_files; ARM translation: $bridge_label"
   --label "org.opencontainers.image.source=https://github.com/regulad/redroid-script"
   --label "org.opencontainers.image.revision=$revision"
   --label "org.opencontainers.image.base.name=${base%@*}"
   --label "org.opencontainers.image.base.digest=${base#*@}"
-  --label "xyz.regulad.redroid-script.gapps=$(field gapps_file)"
+  --label "xyz.regulad.redroid-script.gapps=$gapps_files"
   --label "xyz.regulad.redroid-script.native-bridge=$bridge_label"
 )
 

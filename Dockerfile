@@ -4,16 +4,21 @@
 # where each is pinned: bases and tools by digest, downloads by SHA-256, git
 # sources by commit.
 #
-# Nothing runs on the target architecture. The payload is assembled on the
-# build host ($BUILDPLATFORM) and the image itself is the base plus one COPY,
-# so either kind of runner builds both architectures, without QEMU.
+# The payload is assembled on the build host ($BUILDPLATFORM). The image is the
+# base plus that payload, in one COPY, minus AOSP's Provision, which one static
+# busybox `rm` takes out. That rm is the only thing that runs on the target
+# architecture: for arm64 on an x64 runner, under the QEMU BuildKit ships with.
 
 ARG BASE
 ARG TOOLS
+ARG BUSYBOX
 ARG GAPPS_KIND
 ARG NATIVE_BRIDGE=none
 
 FROM ${BASE} AS base
+
+# For the target architecture, as the base is: the busybox:musl build is static.
+FROM ${BUSYBOX} AS busybox
 
 FROM --platform=${BUILDPLATFORM} ${TOOLS} AS tools
 # GNU tar and Info-ZIP unzip, not busybox's: LiteGapps needs tar -J, and only
@@ -45,6 +50,18 @@ RUN mkdir -p /x /out \
  && mv "/x/${LITEGAPPS_TREE}/system" /out/system
 
 FROM gapps-${GAPPS_KIND} AS gapps
+
+# An add-on package, laid out as a MindTheGapps zip is, with its system/ tree
+# at the top. LiteGapps ships Google's setup wizard as one; see the last stage.
+FROM tools AS gapps-addon
+ARG ADDON_URL
+ARG ADDON_SHA256
+RUN mkdir -p /out \
+ && if [ -n "${ADDON_URL}" ]; then \
+      curl -fsSL --retry 5 --retry-all-errors -o /addon.zip "${ADDON_URL}" \
+      && echo "${ADDON_SHA256}  /addon.zip" | sha256sum -c - \
+      && unzip -q /addon.zip 'system/*' -d /out; \
+    fi
 
 # --- ARM translation --------------------------------------------------------
 
@@ -93,10 +110,18 @@ FROM native-bridge-${NATIVE_BRIDGE} AS native-bridge
 # build host's umask (the 2024 images shipped /system as 0775): everything
 # root's, directories 0755, files 0644, and the two interpreters binfmt_misc
 # hands ARM programs to, 0755.
+#
+# Every payload carries exactly one Google setup wizard, which the last stage
+# relies on.
 FROM tools AS payload
 COPY --from=gapps /out/ /p/
+COPY --from=gapps-addon /out/ /p/
 COPY --from=native-bridge /out/ /p/
-RUN chown -R 0:0 /p \
+RUN wizards=$(find /p/system -path '*/priv-app/SetupWizard*/SetupWizard*.apk' | wc -l) \
+ && if [ "$wizards" -ne 1 ]; then \
+      echo "expected one Google setup wizard in the payload, found $wizards" >&2; exit 1; \
+    fi \
+ && chown -R 0:0 /p \
  && find /p -type d -exec chmod 0755 {} + \
  && find /p -type f -exec chmod 0644 {} + \
  && for f in /p/system/bin/houdini /p/system/bin/houdini64; do \
@@ -105,6 +130,15 @@ RUN chown -R 0:0 /p \
 
 FROM base
 COPY --link --from=payload /p/ /
-# The base's entrypoint, plus a disabled setup wizard: both GApps packages ship
-# Google's, and a redroid container has no one at a screen to finish it.
+# Both GApps installers take AOSP's Provision out when they add Google's setup
+# wizard. Android grants the setup wizard's own permissions only when exactly
+# one app is the setup wizard. With both, Google's is refused them, crashes
+# ("WifiService: Permission denied"), and, being the home screen until setup
+# is done, keeps crashing. The base has no shell a build can use, so a static
+# busybox does it. It is mounted under /dev, which is not part of the image.
+# rm without -f fails if the base no longer has Provision there.
+RUN --mount=type=bind,from=busybox,source=/bin/busybox,target=/dev/.busybox \
+    ["/dev/.busybox", "rm", "-r", "/system/system_ext/priv-app/Provision"]
+# The base's entrypoint, plus a disabled setup wizard: Google's then finishes
+# setup at once, as a redroid container has no one at a screen to go through it.
 ENTRYPOINT ["/init", "qemu=1", "androidboot.hardware=redroid", "ro.setupwizard.mode=DISABLED"]

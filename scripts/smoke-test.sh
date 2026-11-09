@@ -95,11 +95,36 @@ done
 # then crash-loops. Give Play services time to start, then read the crash log.
 echo "letting Google apps run for ${settle}s"
 sleep "$settle"
-crashes=$(timeout 30 adb -s "$serial" logcat -b crash -d 2>/dev/null | tr -d '\r' \
-  | grep -E '^.*Process: (com\.google\.|com\.android\.vending)' | sed -E 's/.*Process: //' | sort | uniq -c || true)
+crash_log=$(timeout 30 adb -s "$serial" logcat -b crash -d -v threadtime 2>/dev/null | tr -d '\r' || true)
+# google_crashes count|trace: reads the crash buffer (threadtime: date, time,
+# PID, ...) for Google apps' crashes. A Java crash is logged by the crashing
+# process ("Process: <name>, PID: <pid>"), a native one by crash_dump
+# (">>> <name> <<<"), each under its own PID. "count" prints how often each
+# app crashed. "trace" prints every line of each app's first crash, however
+# much else, such as other apps' crashes or a crash loop, fills the buffer.
+google_crashes() {
+  # shellcheck disable=SC2016  # awk's own $fields
+  awk -v mode="$1" '
+    NR == FNR {
+      name = ""
+      if (match($0, /Process: [^,]+/)) name = substr($0, RSTART + 9, RLENGTH - 9)
+      else if (match($0, />>> [^ ]+ <<</)) name = substr($0, RSTART + 4, RLENGTH - 8)
+      if (name !~ /^(com\.google\.|com\.android\.vending)/) next
+      if (!(name in first)) first[name] = $3
+      count[name]++
+      next
+    }
+    FNR == 1 {
+      if (mode == "count") { for (n in count) print count[n] "x " n; exit }
+      for (n in first) want[first[n]] = 1
+    }
+    $3 in want
+  ' <(printf '%s\n' "$crash_log") <(printf '%s\n' "$crash_log")
+}
+crashes=$(google_crashes count | sort)
 if [ -n "$crashes" ]; then
-  echo "::group::crash log"; timeout 30 adb -s "$serial" logcat -b crash -d 2>&1 | tail -n 150 || true; echo "::endgroup::"
-  fail "Google apps crashed after boot: $(echo "$crashes" | tr '\n' ';')"
+  echo "::group::the first crash of each Google app"; google_crashes trace; echo "::endgroup::"
+  fail "Google apps crashed after boot: $(paste -sd ';' <<<"$crashes" | sed 's/;/; /g')"
 fi
 echo "no Google app crashed in ${settle}s"
 

@@ -33,15 +33,23 @@ architecture is also tagged on its own, as `<android>-gapps-amd64-latest` and
 | `12.0.0-gapps-latest`, `12.0.0_64only-gapps-latest` | `12.0.0[_64only]-240527` | MindTheGapps 12.1 | MindTheGapps 12.1, redroid's libndk_translation |
 | `13.0.0-gapps-latest`, `13.0.0_64only-gapps-latest` | `13.0.0[_64only]-240527` | MindTheGapps 13 | MindTheGapps 13, redroid's libndk_translation |
 | `14.0.0-gapps-latest`, `14.0.0_64only-gapps-latest` | `14.0.0[_64only]-240527` | MindTheGapps 14 | MindTheGapps 14, redroid's libndk_translation |
-| `15.0.0-gapps-latest`, `15.0.0_64only-gapps-latest` | `15.0.0[_64only]-250627` | MindTheGapps 15 | MindTheGapps 15, libhoudini |
-| `16.0.0-gapps-latest`, `16.0.0_64only-gapps-latest` | `16.0.0[_64only]-250627` | MindTheGapps 16 | LiteGapps 16, libhoudini |
+| `15.0.0-gapps-latest`, `15.0.0_64only-gapps-latest` | `15.0.0[_64only]-250627` | MindTheGapps 15 | LiteGapps 15 and its setup wizard, libhoudini |
+| `16.0.0-gapps-latest`, `16.0.0_64only-gapps-latest` | `16.0.0[_64only]-250627` | MindTheGapps 16 | LiteGapps 16 and its setup wizard, libhoudini |
 
 Where these came from:
 
 - **MindTheGapps** is the official build from
-  [MindTheGapps](https://github.com/MindTheGapps), except amd64 14 and 15,
-  which come from [s1204IT/MindTheGappsBuilder](https://github.com/s1204IT/MindTheGappsBuilder).
-- **LiteGapps** fills in amd64 16, for which there is no MindTheGapps build.
+  [MindTheGapps](https://github.com/MindTheGapps), except amd64 14, which
+  comes from [s1204IT/MindTheGappsBuilder](https://github.com/s1204IT/MindTheGappsBuilder).
+  Android 16's is the build of July 2025, a month after the redroid 16 base.
+  The October 2026 build's Play services crashed on that base, looking for
+  an Android 16 safety source (AdvancedProtection) it does not have.
+- **LiteGapps** fills in amd64 15 and 16. MindTheGapps has no x86_64 build of
+  16, and s1204IT's of 15 ships Play services from 2022, which crash on it.
+  LiteGapps leaves Google's setup wizard to an add-on, which the recipe adds
+  (see below). The add-on's file name carries no date, so when LiteGapps
+  replaces it, its pinned SHA-256 stops matching and the build fails until the
+  pin is updated.
 - **libndk_translation** comes with redroid's own amd64 12–14 bases.
 - **libhoudini** is the build from Google Play Games for PC
   ([rote66/vendor_intel_proprietary_houdini](https://github.com/rote66/vendor_intel_proprietary_houdini)),
@@ -59,9 +67,11 @@ were and are not rebuilt.
 - **Everything is pinned in [`matrix.json`](matrix.json).** Bases and tools by
   digest, downloads by SHA-256, git sources by commit. A change to any input is
   a commit here.
-- **Nothing runs on the target architecture.** The [`Dockerfile`](Dockerfile)
-  assembles the files on the build host and adds them to the base in one
-  `COPY`, so neither architecture needs QEMU.
+- **Almost nothing runs on the target architecture.** The
+  [`Dockerfile`](Dockerfile) assembles the files on the build host and adds
+  them to the base in one `COPY`. The one exception is a static busybox `rm`
+  that takes out AOSP's Provision (see below); for arm64 it runs under the QEMU
+  that BuildKit ships with, so the runner needs none of its own.
 - **Builds are reproducible.** Timestamps come from `SOURCE_DATE_EPOCH`, the
   time of the last commit that changed an input, so the same inputs give the
   same layers. Pushing from BuildKit keeps the base's layers byte for byte as
@@ -88,7 +98,18 @@ were and are not rebuilt.
 - **The tagged images are signed** with cosign, keyless, through GitHub's
   OIDC token.
 
-Two corrections from upstream redroid-script are worth knowing:
+Three corrections from upstream redroid-script are worth knowing:
+
+- **AOSP's Provision is taken out**, as the MindTheGapps and LiteGapps
+  installers do when they add Google's setup wizard. Android grants the setup
+  wizard's own permissions only when exactly one app is the setup wizard. With
+  both, Google's is refused them and crashes ("WifiService: Permission
+  denied"), and it is the home screen until setup is done, so it keeps
+  crashing. Without Google's setup wizard at all, Provision finishes setup but
+  the Play Store does not count it: on Android 16 it crashed trying to start
+  its "finish setting up" service, which Android does not let it run. So
+  every image carries Google's wizard, and `ro.setupwizard.mode=DISABLED` in
+  the entrypoint has it finish at once.
 
 - **On amd64 15 and 16, libhoudini goes behind `libnb.so`.** Those redroid bases
   already set `ro.dalvik.vm.native.bridge=libnb.so` but ship no `libnb.so`.

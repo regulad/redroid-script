@@ -176,8 +176,22 @@ jobs:
       # VM, which loads it from the directory it shares with the runner.
       - name: Build
         run: |
+          set -euo pipefail
           mkdir -p "$RUNNER_TEMP/job"
           scripts/build.sh "$ANDROID" "$ARCH" --save "$RUNNER_TEMP/job/image.tar"
+          # The last layer is the rm of Provision. It should hold Provision's
+          # whiteout and its parent directories, and no stub of the mounts
+          # BuildKit made for it.
+          layer=$(tar -xOf "$RUNNER_TEMP/job/image.tar" manifest.json | jq -r '.[0].Layers[-1]')
+          tar -xOf "$RUNNER_TEMP/job/image.tar" "$layer" > "$RUNNER_TEMP/last-layer"
+          echo "the image's last layer, $layer:"
+          tar -tvf "$RUNNER_TEMP/last-layer"
+          unexpected=$(tar -tf "$RUNNER_TEMP/last-layer" \
+            | grep -v -x -E '(\./)?system/((system_ext/(priv-app/(\.wh\.Provision)?)?)?)?' || true)
+          if [ -n "$unexpected" ]; then
+            echo "::error::the last layer holds more than Provision's whiteout: $(echo $unexpected)"
+            exit 1
+          fi
 
       - name: Install QEMU and adb
         if: env.SMOKE == 'true'
