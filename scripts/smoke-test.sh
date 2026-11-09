@@ -136,18 +136,21 @@ if [ "$bridge" != none ]; then
     *arm64-v8a*) ;;
     *) fail "ro.product.cpu.abilist does not offer arm64-v8a" ;;
   esac
-  sh_ cat /proc/sys/fs/binfmt_misc/arm64_dyn | grep -q '^enabled' \
-    || fail "no enabled arm64_dyn handler in binfmt_misc"
+  # Read whole, then searched: grep -q stops at its first match, and under
+  # pipefail the reader it cut off would turn that match into a failure.
+  binfmt=$(sh_ cat /proc/sys/fs/binfmt_misc/arm64_dyn || true)
+  grep -q '^enabled' <<<"$binfmt" || fail "no enabled arm64_dyn handler in binfmt_misc"
   if [ "$bridge" = houdini ]; then
+    ld_config=$(sh_ cat /linkerconfig/ld.config.txt || true)
     # ${LIB} is the linker's own variable, meant literally.
     # shellcheck disable=SC2016
-    if ! sh_ cat /linkerconfig/ld.config.txt | grep -qF '/system/${LIB}/arm64/nb'; then
+    if ! grep -qF '/system/${LIB}/arm64/nb' <<<"$ld_config"; then
       echo "::group::why the linker-namespace patch is missing"
       sh_ ls -l /system/bin/patch /system/etc/ld_config.patch /linkerconfig/ld.config.txt || true
       sh_ dmesg | grep -i -E 'ld_config|patch|exec' | tail -n 20 || true
       # A dry run shows which hunks no longer match this base.
       sh_ /system/bin/patch --dry-run /linkerconfig/ld.config.txt /system/etc/ld_config.patch || true
-      sh_ grep -n -E '^namespace\.default\.(search|permitted)\.paths' /linkerconfig/ld.config.txt | head -n 40 || true
+      grep -n -E '^namespace\.(default|sphal)\.(asan\.|hwasan\.)?(search|permitted)\.paths' <<<"$ld_config" | head -n 80 || true
       echo "::endgroup::"
       fail "the houdini linker-namespace patch is not in /linkerconfig/ld.config.txt"
     fi

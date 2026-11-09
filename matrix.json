@@ -42,12 +42,6 @@
       "url": "https://github.com/MindTheGapps/14.0.0-arm64/releases/download/MindTheGapps-14.0.0-arm64-20250203_200051/MindTheGapps-14.0.0-arm64-20250203_200051.zip",
       "sha256": "6e1c3616862ce5b33e2b96074f86ae846eb1351a26a980e1ed140f8a7e7a4fd6"
     },
-    "mindthegapps-14.0.0-x86_64": {
-      "kind": "mindthegapps",
-      "file": "MindTheGapps-14.0.0-x86_64-20250330.zip",
-      "url": "https://github.com/s1204IT/MindTheGappsBuilder/releases/download/20250330/MindTheGapps-14.0.0-x86_64-20250330.zip",
-      "sha256": "ea6738b4908c1290447f610f365e84d46ca894c9a65eef90b83030d769990d7f"
-    },
     "mindthegapps-15.0.0-arm64": {
       "kind": "mindthegapps",
       "file": "MindTheGapps-15.0.0-arm64-20260915_032013.zip",
@@ -60,6 +54,13 @@
       "url": "https://github.com/MindTheGapps/16.0.0-arm64/releases/download/MindTheGapps-16.0.0-arm64-20250709_200551/MindTheGapps-16.0.0-arm64-20250709_200551.zip",
       "sha256": "bb2500f82ebdf7ba64cf65e197f95c144797e1f5e59052959d3ae502b582e6ed"
     },
+    "litegapps-14.0-x86_64": {
+      "kind": "litegapps",
+      "file": "LiteGapps-x86_64-14.0-20241029-official.zip",
+      "url": "https://sourceforge.net/projects/litegapps/files/litegapps/x86_64/34/lite/2024-10-29/LiteGapps-x86_64-14.0-20241029-official.zip/download",
+      "sha256": "44183c9aa40ec8f45835636960b7a78f677b6e75c8692583884fda825efc1039",
+      "tree": "x86_64/34"
+    },
     "litegapps-15.0-x86_64": {
       "kind": "litegapps",
       "file": "LiteGapps-x86_64-15.0-20261001-official.zip",
@@ -67,12 +68,12 @@
       "sha256": "0165be0c3561f3998e968077c6b971e84bb25892946d89ccf1f94fafce56840b",
       "tree": "x86_64/35"
     },
-    "litegapps-16.0-x86_64": {
-      "kind": "litegapps",
-      "file": "LiteGapps-x86_64-16.0-20261001-official.zip",
-      "url": "https://sourceforge.net/projects/litegapps/files/litegapps/x86_64/36/lite/2026-10-01/LiteGapps-x86_64-16.0-20261001-official.zip/download",
-      "sha256": "679135e31ef91275fef1dfca7cace43dafdc9d93da9e0cd1de0e12a9f6b55632",
-      "tree": "x86_64/36"
+    "litegapps-setupwizard-14.0-x86_64": {
+      "kind": "addon",
+      "file": "SetupWizard-LiteGapps-Addon-x86_64-14.0.zip",
+      "version": "20261001",
+      "url": "https://sourceforge.net/projects/litegapps/files/addon/x86_64/34/core/SetupWizard/SetupWizard-LiteGapps-Addon-x86_64-14.0.zip/download",
+      "sha256": "6cdcb011833d20c2a4ffd5f8579979148df02d52cd4827442bcededb4a6affb9"
     },
     "litegapps-setupwizard-15.0-x86_64": {
       "kind": "addon",
@@ -80,13 +81,6 @@
       "version": "20261001",
       "url": "https://sourceforge.net/projects/litegapps/files/addon/x86_64/35/core/SetupWizard/SetupWizard-LiteGapps-Addon-x86_64-15.0.zip/download",
       "sha256": "82fd155050ca427b1a583da5f8a77327a0025de4b1e79fac0416d5adb1deca63"
-    },
-    "litegapps-setupwizard-16.0-x86_64": {
-      "kind": "addon",
-      "file": "SetupWizard-LiteGapps-Addon-x86_64-16.0.zip",
-      "version": "20261001",
-      "url": "https://sourceforge.net/projects/litegapps/files/addon/x86_64/36/core/SetupWizard/SetupWizard-LiteGapps-Addon-x86_64-16.0.zip/download",
-      "sha256": "46b6da76f0429250f311e53be0a0f0171125bb3a39b15e20405b8520adb47127"
     }
   },
   "images": [
@@ -151,7 +145,8 @@
       "base": "docker.io/redroid/redroid:14.0.0-240527@sha256:a3e654caad74faed03cd5ead057a989e06f507778cda678e5d3b9772e0092f1c",
       "platforms": {
         "amd64": {
-          "gapps": "mindthegapps-14.0.0-x86_64",
+          "gapps": "litegapps-14.0-x86_64",
+          "addon": "litegapps-setupwizard-14.0-x86_64",
           "native_bridge": "builtin"
         },
         "arm64": {
@@ -165,7 +160,8 @@
       "base": "docker.io/redroid/redroid:14.0.0_64only-240527@sha256:0a611199ba2e0b5d60af39b3327a517f6407231f4352114ed3bd3cbfe2be69aa",
       "platforms": {
         "amd64": {
-          "gapps": "mindthegapps-14.0.0-x86_64",
+          "gapps": "litegapps-14.0-x86_64",
+          "addon": "litegapps-setupwizard-14.0-x86_64",
           "native_bridge": "builtin"
         },
         "arm64": {
@@ -209,8 +205,8 @@
       "base": "docker.io/redroid/redroid:16.0.0-250627@sha256:d89f520484bd16aac244e9832a150f72a8b9296f0b4439f3667c8181d1f3b77f",
       "platforms": {
         "amd64": {
-          "gapps": "litegapps-16.0-x86_64",
-          "addon": "litegapps-setupwizard-16.0-x86_64",
+          "gapps": "litegapps-15.0-x86_64",
+          "addon": "litegapps-setupwizard-15.0-x86_64",
           "native_bridge": "houdini"
         },
         "arm64": {
@@ -224,8 +220,8 @@
       "base": "docker.io/redroid/redroid:16.0.0_64only-250627@sha256:7b1e389bd15f37af3bcd06138f5b2ffa7cfba4332bd5ef54c53e99c2f160a15b",
       "platforms": {
         "amd64": {
-          "gapps": "litegapps-16.0-x86_64",
-          "addon": "litegapps-setupwizard-16.0-x86_64",
+          "gapps": "litegapps-15.0-x86_64",
+          "addon": "litegapps-setupwizard-15.0-x86_64",
           "native_bridge": "houdini"
         },
         "arm64": {

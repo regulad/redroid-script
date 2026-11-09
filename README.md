@@ -32,20 +32,24 @@ architecture is also tagged on its own, as `<android>-gapps-amd64-latest` and
 | --- | --- | --- | --- |
 | `12.0.0-gapps-latest`, `12.0.0_64only-gapps-latest` | `12.0.0[_64only]-240527` | MindTheGapps 12.1 | MindTheGapps 12.1, redroid's libndk_translation |
 | `13.0.0-gapps-latest`, `13.0.0_64only-gapps-latest` | `13.0.0[_64only]-240527` | MindTheGapps 13 | MindTheGapps 13, redroid's libndk_translation |
-| `14.0.0-gapps-latest`, `14.0.0_64only-gapps-latest` | `14.0.0[_64only]-240527` | MindTheGapps 14 | MindTheGapps 14, redroid's libndk_translation |
+| `14.0.0-gapps-latest`, `14.0.0_64only-gapps-latest` | `14.0.0[_64only]-240527` | MindTheGapps 14 | LiteGapps 14 and its setup wizard, redroid's libndk_translation |
 | `15.0.0-gapps-latest`, `15.0.0_64only-gapps-latest` | `15.0.0[_64only]-250627` | MindTheGapps 15 | LiteGapps 15 and its setup wizard, libhoudini |
-| `16.0.0-gapps-latest`, `16.0.0_64only-gapps-latest` | `16.0.0[_64only]-250627` | MindTheGapps 16 | LiteGapps 16 and its setup wizard, libhoudini |
+| `16.0.0-gapps-latest`, `16.0.0_64only-gapps-latest` | `16.0.0[_64only]-250627` | MindTheGapps 16 | LiteGapps 15 and its setup wizard, libhoudini |
 
 Where these came from:
 
 - **MindTheGapps** is the official build from
-  [MindTheGapps](https://github.com/MindTheGapps), except amd64 14, which
-  comes from [s1204IT/MindTheGappsBuilder](https://github.com/s1204IT/MindTheGappsBuilder).
+  [MindTheGapps](https://github.com/MindTheGapps).
   Android 16's is the build of July 2025, a month after the redroid 16 base.
   The October 2026 build's Play services crashed on that base, looking for
   an Android 16 safety source (AdvancedProtection) it does not have.
-- **LiteGapps** fills in amd64 15 and 16. MindTheGapps has no x86_64 build of
-  16, and s1204IT's of 15 ships Play services from 2022, which crash on it.
+- **LiteGapps** fills in amd64 14 to 16. MindTheGapps' own x86_64 builds stop
+  at 13. [s1204IT/MindTheGappsBuilder](https://github.com/s1204IT/MindTheGappsBuilder)
+  builds 14 and 15, but with the Play Store and Play services of 2022, which
+  crash on them. LiteGapps' Android 16 build ships Play Store 45, which crash-
+  loops on the redroid 16 base: Android refuses to run its "finish setting up"
+  service. So amd64 16 takes LiteGapps' Android 15 build, whose Play Store
+  (41.3) and Play services (24.23) are the ones amd64 14 and 15 run.
   LiteGapps leaves Google's setup wizard to an add-on, which the recipe adds
   (see below). The add-on's file name carries no date, so when LiteGapps
   replaces it, its pinned SHA-256 stops matching and the build fails until the
@@ -105,11 +109,9 @@ Three corrections from upstream redroid-script are worth knowing:
   wizard's own permissions only when exactly one app is the setup wizard. With
   both, Google's is refused them and crashes ("WifiService: Permission
   denied"), and it is the home screen until setup is done, so it keeps
-  crashing. Without Google's setup wizard at all, Provision finishes setup but
-  the Play Store does not count it: on Android 16 it crashed trying to start
-  its "finish setting up" service, which Android does not let it run. So
-  every image carries Google's wizard, and `ro.setupwizard.mode=DISABLED` in
-  the entrypoint has it finish at once.
+  crashing. Every image carries Google's wizard, LiteGapps' through its
+  add-on, so every image is set up the same way, and
+  `ro.setupwizard.mode=DISABLED` in the entrypoint has it finish at once.
 
 - **On amd64 15 and 16, libhoudini goes behind `libnb.so`.** Those redroid bases
   already set `ro.dalvik.vm.native.bridge=libnb.so` but ship no `libnb.so`.
