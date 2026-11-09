@@ -4,59 +4,69 @@
 #   scripts/smoke-test.sh <image> <native_bridge> <android>
 #
 # <native_bridge> is that platform's value in matrix.json (none, builtin or
-# houdini) and <android> the image's redroid variant. Needs a Linux host whose
-# kernel has binder (binder_linux or binderfs), and, for Android 16, ashmem;
-# root through sudo, Docker and adb. The image runs privileged, as redroid
-# must, under the name redroid-smoke, which is removed afterwards.
+# houdini), and <android> the image's redroid variant (used in messages).
 #
-# It passes when Android finishes booting; Play services, Google Services
-# Framework and the Play Store are installed as system apps and do not crash in
-# the next SETTLE_SECONDS (90); and, for builtin or houdini, the ARM native
-# bridge is configured and its binfmt_misc handler registered.
+# The image runs on a Docker host whose kernel has binder and ashmem. That is
+# this machine, or, with SMOKE_REMOTE set to a command prefix that runs a
+# command there (CI uses "scripts/vm.sh ssh"), another one, which must
+# publish the container's adb port as 127.0.0.1:${ADB_PORT:-5555} here.
+# Android runs on ashmem only, never memfd: Android 16 cannot use memfd
+# without Android's own kernel patches, so no version is tested on it. The
+# container runs privileged, as redroid must, as redroid-smoke, and is removed
+# afterwards.
+#
+# It passes when:
+#   - Android finishes booting within BOOT_TIMEOUT (600) seconds.
+#   - Play services, Google Services Framework and the Play Store are
+#     installed as system apps, and none crashes in the next
+#     SETTLE_SECONDS (90).
+#   - For builtin or houdini, the ARM native bridge is configured and its
+#     binfmt_misc handler registered.
 set -euo pipefail
 
 image=$1 bridge=$2 android=$3
 name=redroid-smoke
 boot_timeout=${BOOT_TIMEOUT:-600}
+settle=${SETTLE_SECONDS:-90}
+serial=127.0.0.1:${ADB_PORT:-5555}
+# Locally, publish adb on loopback only; in a VM, on the address QEMU forwards to.
+publish=${SMOKE_PUBLISH:-127.0.0.1}
 
 fail() { echo "::error::$*"; exit 1; }
 
-dump() {
-  echo "::group::container log"; docker logs "$name" 2>&1 | tail -n 200 || true; echo "::endgroup::"
-  if [ -n "${serial:-}" ]; then
-    echo "::group::logcat (last 400 lines)"; timeout 30 adb -s "$serial" logcat -d 2>&1 | tail -n 400 || true; echo "::endgroup::"
+# on_host <command...>: runs a command on the Docker host.
+on_host() {
+  if [ -n "${SMOKE_REMOTE:-}" ]; then
+    # shellcheck disable=SC2086  # SMOKE_REMOTE is a command prefix, split on purpose
+    $SMOKE_REMOTE "$@"
+  else
+    "$@"
   fi
 }
-cleanup() { status=$?; [ $status -eq 0 ] || dump; docker rm -f "$name" >/dev/null 2>&1 || true; exit $status; }
+
+dump() {
+  echo "::group::container log"; on_host docker logs "$name" 2>&1 | tail -n 200 || true; echo "::endgroup::"
+  echo "::group::logcat (last 400 lines)"; timeout 30 adb -s "$serial" logcat -d 2>&1 | tail -n 400 || true; echo "::endgroup::"
+}
+cleanup() { status=$?; [ $status -eq 0 ] || dump; on_host docker rm -f "$name" >/dev/null 2>&1 || true; exit $status; }
 trap cleanup EXIT
 
-# binderfs needs only binder_linux; the devices= list is for kernels without it.
-if ! grep -qw binder /proc/filesystems && [ ! -e /dev/binder ]; then
-  sudo modprobe binder_linux devices=binder,hwbinder,vndbinder \
-    || fail "this kernel ($(uname -r)) has no binder, which redroid needs"
-fi
+kernel=$(on_host uname -r)
+on_host test -c /dev/ashmem \
+  || fail "the Docker host's kernel ($kernel) has no /dev/ashmem; load ashmem_linux, or use scripts/vm.sh"
+on_host sh -c 'test -e /dev/binder || grep -qw binder /proc/filesystems' \
+  || fail "the Docker host's kernel ($kernel) has no binder; load binder_linux"
 
-# memfd stands in for ashmem up to Android 15, but redroid 16's SurfaceFlinger
-# aborts at boot ("output buffer not gpu writeable") without /dev/ashmem:
-# remote-android/redroid-doc#934. Say so now rather than after a 10-minute
-# boot loop.
-if [ "${android%%.*}" -ge 16 ] && [ ! -e /dev/ashmem ]; then
-  fail "Android $android needs /dev/ashmem, which this kernel ($(uname -r)) does not have (redroid-doc#934)"
-fi
-
-docker rm -f "$name" >/dev/null 2>&1 || true
-docker run -d --privileged --name "$name" "$image" \
-  androidboot.use_memfd=1 androidboot.redroid_gpu_mode=guest >/dev/null
-ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$name")
-[ -n "$ip" ] || fail "the container has no IP address; did it exit at once?"
-serial=$ip:5555
+on_host docker rm -f "$name" >/dev/null 2>&1 || true
+on_host docker run -d --privileged --name "$name" -p "$publish:${ADB_PORT:-5555}:5555" "$image" \
+  androidboot.redroid_gpu_mode=guest >/dev/null
 
 sh_() { timeout 60 adb -s "$serial" shell "$@" | tr -d '\r'; }
 
-echo "waiting up to ${boot_timeout}s for $image to boot ($serial)"
+echo "waiting up to ${boot_timeout}s for $image ($android) to boot on $kernel"
 deadline=$((SECONDS + boot_timeout))
 until [ "$(sh_ getprop sys.boot_completed 2>/dev/null || true)" = 1 ]; do
-  [ "$(docker inspect -f '{{.State.Running}}' "$name")" = true ] || fail "the container exited during boot"
+  [ "$(on_host docker inspect -f '{{.State.Running}}' "$name")" = true ] || fail "the container exited during boot"
   [ $SECONDS -lt $deadline ] || fail "Android did not finish booting in ${boot_timeout}s"
   timeout 10 adb connect "$serial" >/dev/null 2>&1 || true
   sleep 5
@@ -83,7 +93,6 @@ done
 
 # Installed is not working: a GApps package that does not fit the base boots,
 # then crash-loops. Give Play services time to start, then read the crash log.
-settle=${SETTLE_SECONDS:-90}
 echo "letting Google apps run for ${settle}s"
 sleep "$settle"
 crashes=$(timeout 30 adb -s "$serial" logcat -b crash -d 2>/dev/null | tr -d '\r' \

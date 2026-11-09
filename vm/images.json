@@ -1,0 +1,11 @@
+{
+  "release": "https://cloud-images.ubuntu.com/releases/jammy/release-20261020",
+  "amd64": {
+    "file": "ubuntu-22.04-server-cloudimg-amd64.img",
+    "sha256": "2099e63da0b822ef8e05e3d596c1b402eaaae658fc08ab919cb8495bfcdc488b"
+  },
+  "arm64": {
+    "file": "ubuntu-22.04-server-cloudimg-arm64.img",
+    "sha256": "e720ae083f93baae47ac9b76a096243fe1027f60998cf1127a47a74c880f64ed"
+  }
+}

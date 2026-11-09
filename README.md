@@ -71,10 +71,18 @@ were and are not rebuilt.
   booting. It then checks:
   - Play services, Google Services Framework and the Play Store are installed
     as system apps.
-  - None of them crashes in the next 90 seconds.
+  - None of them crashes while they start up.
   - On amd64, the native bridge is set up and registered with binfmt_misc.
-
-  Each image is built and booted on a runner of its own architecture.
+- **Images boot on ashmem, never memfd.** Android 16 only uses memfd if the
+  kernel lets memfds answer ashmem's ioctls, which only Android's own kernels
+  do; elsewhere it falls back to `/dev/ashmem`. So every version is tested the
+  way it will run: on a kernel with ashmem.
+- **The boot test runs in a VM** ([`scripts/vm.sh`](scripts/vm.sh)): Ubuntu
+  22.04 on its 5.15 kernel, the newest Ubuntu kernel that ships `ashmem_linux`.
+  Its disk is made once from a pinned cloud image ([`vm/`](vm/)) and cached.
+  amd64 images boot under KVM. arm64 images are emulated by QEMU, because
+  GitHub's Arm runners have no KVM, and emulating on x64 measured faster.
+  Every job therefore runs on an x64 runner.
 - **One failure holds back only its own image.** An image is tagged only when
   both its architectures built and booted.
 - **The tagged images are signed** with cosign, keyless, through GitHub's
@@ -114,12 +122,31 @@ downloaded. The `COPY gapps /` layer is the same in all three 2024 versions.
 
 ## Building locally
 
-You need Docker with buildx, `jq` and `git`:
+You need Docker with buildx, `jq` and `git`. Either architecture builds on
+either kind of machine:
 
 ```sh
 scripts/build.sh 16.0.0_64only amd64 --print   # the resolved inputs
 scripts/build.sh 16.0.0_64only amd64 --load    # -> redroid-script:16.0.0_64only-amd64
+```
+
+To boot it, you need a kernel with binder and ashmem. On a host that has
+them, such as Ubuntu 22.04 on its 5.15 kernel with `linux-modules-extra`:
+
+```sh
 scripts/smoke-test.sh redroid-script:16.0.0_64only-amd64 houdini 16.0.0_64only
+```
+
+Anywhere else, use the VM, as CI does. You need QEMU and `adb`:
+
+```sh
+scripts/vm.sh prepare amd64 vm-amd64.qcow2              # once
+mkdir -p job && scripts/build.sh 16.0.0_64only amd64 --save job/image.tar
+scripts/vm.sh start amd64 vm-amd64.qcow2 job
+scripts/vm.sh ssh docker load -i /job/image.tar
+SMOKE_REMOTE="scripts/vm.sh ssh" SMOKE_PUBLISH=0.0.0.0 \
+  scripts/smoke-test.sh redroid-script:16.0.0_64only-amd64 houdini 16.0.0_64only
+scripts/vm.sh stop
 ```
 
 ## Verifying a signature

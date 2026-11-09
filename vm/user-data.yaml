@@ -1,0 +1,61 @@
+#cloud-config
+# Turns Ubuntu's 22.04 cloud image into the host redroid boots on in CI, on the
+# first boot, then powers off. scripts/vm.sh prepare feeds it in.
+#
+# The cloud image's kernel is linux-image-virtual, which leaves out
+# linux-modules-extra, where ashmem_linux and binder_linux are. linux-image-
+# generic brings the newest 5.15 kernel with both. It is the GA line, not the
+# 6.x HWE kernels, which have no ashmem.
+package_update: true
+packages:
+  - linux-image-generic
+  - docker.io
+
+write_files:
+  # ashmem and binder for redroid; 9p for the directory the host shares as
+  # /job. Loaded early, at boot: an fstab mount of /job raced the 9p modules'
+  # loading, and lost.
+  - path: /etc/modules-load.d/redroid.conf
+    content: |
+      ashmem_linux
+      binder_linux
+      9p
+      9pnet_virtio
+  - path: /etc/modprobe.d/redroid.conf
+    content: |
+      options binder_linux devices=binder,hwbinder,vndbinder
+  # Each run hands the VM its own SSH key on the shared directory, so the disk
+  # carries no key of its own. Output goes to the serial console, which the
+  # host keeps, so a failure here shows in its log.
+  - path: /etc/systemd/system/job-share.service
+    content: |
+      [Unit]
+      Description=Mount the host's job share and authorize its SSH key
+      After=systemd-modules-load.service
+      Before=ssh.service
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      StandardOutput=journal+console
+      StandardError=journal+console
+      ExecStart=/bin/mount -t 9p -o trans=virtio,version=9p2000.L,msize=1048576 job /job
+      ExecStart=/usr/bin/install -D -m 600 -o ubuntu -g ubuntu /job/authorized_keys /home/ubuntu/.ssh/authorized_keys
+      [Install]
+      WantedBy=multi-user.target
+
+runcmd:
+  - mkdir -p /job
+  - usermod -aG docker ubuntu
+  - systemctl enable docker job-share.service
+  # Nothing here needs snaps or unattended upgrades, and both slow every boot.
+  - apt-get purge -y snapd unattended-upgrades
+  - apt-get autoremove -y
+  - apt-get clean
+  # Hand freed blocks back, so the compressed copy of the disk leaves them out.
+  - fstrim -av
+  - touch /etc/cloud/cloud-init.disabled
+  - touch /var/lib/redroid-vm-prepared
+
+power_state:
+  mode: poweroff
+  timeout: 60

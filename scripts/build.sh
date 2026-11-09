@@ -3,21 +3,26 @@
 # in matrix.json. CI runs exactly this; so can anyone with Docker and buildx.
 #
 #   scripts/build.sh <android> <arch> --load
+#   scripts/build.sh <android> <arch> --save <tarball>
 #   scripts/build.sh <android> <arch> --push <repository> <metadata-file>
 #   scripts/build.sh <android> <arch> --print
 #
 # <android> is a redroid variant from matrix.json (12.0.0, 16.0.0_64only, ...),
-# <arch> amd64 or arm64. --load puts the image in the local Docker engine as
-# redroid-script:<android>-<arch>; --push sends it to <repository> by digest
-# only (CI tags it afterwards) and writes buildx's metadata, digest included,
-# to <metadata-file>; --print shows the resolved inputs and builds nothing.
+# <arch> amd64 or arm64; either builds on either kind of machine.
+#
+#   --load   puts the image in the local Docker engine as
+#            redroid-script:<android>-<arch>.
+#   --save   writes that image to <tarball>, for `docker load` elsewhere.
+#   --push   sends it to <repository> by digest only (CI tags it afterwards),
+#            and writes buildx's metadata, digest included, to <metadata-file>.
+#   --print  shows the resolved inputs and builds nothing.
 #
 # The image's timestamps come from SOURCE_DATE_EPOCH, by default the time of the
 # last commit that touched an input, so that rebuilding the same inputs gives
 # the same layers.
 set -euo pipefail
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" >&2; exit 2; }
 [ $# -ge 3 ] || usage
 android=$1 arch=$2 mode=$3
 shift 3
@@ -96,6 +101,12 @@ args=(
 case "$mode" in
   --load)
     args+=(--output "type=docker,name=redroid-script:$android-$arch,rewrite-timestamp=true")
+    ;;
+  --save)
+    [ $# -ge 1 ] || usage
+    tarball=$1
+    shift
+    args+=(--output "type=docker,name=redroid-script:$android-$arch,dest=$tarball,rewrite-timestamp=true")
     ;;
   --push)
     [ $# -ge 2 ] || usage

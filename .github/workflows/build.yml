@@ -8,6 +8,13 @@
 # way an image gets built, here or on a workstation. This file only decides
 # where each step runs.
 #
+# Images boot in a VM (scripts/vm.sh): Ubuntu 22.04 on its 5.15 kernel, the
+# newest Ubuntu kernel with ashmem, which Android 16 needs on any kernel without
+# Android's memfd patches. Every image is booted on ashmem, as production runs
+# them. GitHub's x64 runners have KVM and its Arm ones do not, so every job
+# runs on x64. amd64 guests run under KVM; arm64 guests are emulated, which
+# took the x64 runners less time than the Arm ones.
+#
 # Alongside, reproduce-2024 runs the script that made the 2024 images, untouched
 # (it is on the legacy/2024-07-22 branch), and checks that what it builds today
 # matches what was published then, file for file.
@@ -59,6 +66,9 @@ jobs:
       # Publishing needs a Nexus account allowed to push to the cr repository.
       # Without one (a fork, or before the secrets are set) everything else
       # still runs.
+      #
+      # Emulated arm64 boots get hours rather than minutes, and more time for
+      # Google apps to start before the crash log is read.
       - id: plan
         env:
           ONLY: ${{ inputs.android }}
@@ -74,8 +84,10 @@ jobs:
           builds=$(jq -c --arg only "$ONLY" '[
             .images[] | select($only == "" or .android == $only) | .android as $android
             | .platforms | to_entries[]
-            | {android: $android, arch: .key, native_bridge: .value.native_bridge,
-               runner: (if .key == "arm64" then "ubuntu-24.04-arm" else "ubuntu-24.04" end)}
+            | {android: $android, arch: .key, native_bridge: .value.native_bridge}
+            + (if .key == "arm64"
+               then {boot_timeout: 14400, settle: 900, timeout: 340}
+               else {boot_timeout: 900, settle: 90, timeout: 60} end)
           ]' matrix.json)
           publish=false
           if [ "$WANT_PUBLISH" = true ]; then
@@ -92,49 +104,112 @@ jobs:
             echo "registry=$(jq -r .registry matrix.json)"
           } >> "$GITHUB_OUTPUT"
 
-  # Each image is built on its own architecture, though build.sh does not need
-  # that, so that it can be booted before it is pushed.
+  # The disk the boot tests' VM runs from, one per guest architecture. It is
+  # made once and cached until vm/ or scripts/vm.sh change: making the arm64
+  # one is emulated, and slow.
+  vm-disk:
+    name: VM disk (${{ matrix.arch }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - id: cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/vm-disk
+          key: vm-${{ matrix.arch }}-${{ hashFiles('vm/**', 'scripts/vm.sh') }}
+          lookup-only: true
+
+      - name: Make the disk
+        if: steps.cache.outputs.cache-hit != 'true'
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          scripts/vm.sh deps "$ARCH"
+          mkdir -p "$RUNNER_TEMP/vm-disk"
+          VM_STATE=$RUNNER_TEMP/vm scripts/vm.sh prepare "$ARCH" "$RUNNER_TEMP/vm-disk/$ARCH.qcow2"
+
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/vm-disk
+          key: vm-${{ matrix.arch }}-${{ hashFiles('vm/**', 'scripts/vm.sh') }}
+
   build:
-    needs: plan
+    needs: [plan, vm-disk]
     name: ${{ matrix.android }} ${{ matrix.arch }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    runs-on: ubuntu-24.04
+    timeout-minutes: ${{ matrix.timeout }}
     strategy:
       fail-fast: false
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.builds) }}
+    env:
+      ANDROID: ${{ matrix.android }}
+      ARCH: ${{ matrix.arch }}
+      SMOKE: ${{ github.event_name != 'workflow_dispatch' || inputs.smoke_test }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # build.sh dates the image by the last commit that touched an input.
           fetch-depth: 0
 
-      # A base is about 3 GB unpacked, and the image is held twice: in
-      # BuildKit and in the Docker engine it is loaded into to boot.
+      # A base is about 3 GB unpacked; BuildKit holds it, the VM's disk holds
+      # it again once loaded, and the tarball between them is another 1 GB.
       - name: Make room
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
           df -h /
+          echo "VM_STATE=$RUNNER_TEMP/vm" >> "$GITHUB_ENV"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver-opts: image=${{ env.BUILDKIT_IMAGE }}
 
+      # Into a tarball rather than this runner's Docker: the image boots in the
+      # VM, which loads it from the directory it shares with the runner.
       - name: Build
-        run: scripts/build.sh "${{ matrix.android }}" "${{ matrix.arch }}" --load
-
-      # Binder comes from linux-modules-extra on GitHub's kernels.
-      - name: Install adb and binder
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.smoke_test }}
         run: |
-          sudo apt-get update -q
+          mkdir -p "$RUNNER_TEMP/job"
+          scripts/build.sh "$ANDROID" "$ARCH" --save "$RUNNER_TEMP/job/image.tar"
+
+      - name: Install QEMU and adb
+        if: env.SMOKE == 'true'
+        run: |
+          scripts/vm.sh deps "$ARCH"
           sudo apt-get install -y -q adb
-          sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" || echo "::warning::no linux-modules-extra for $(uname -r)"
+
+      - if: env.SMOKE == 'true'
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/vm-disk
+          key: vm-${{ matrix.arch }}-${{ hashFiles('vm/**', 'scripts/vm.sh') }}
+          fail-on-cache-miss: true
+
+      - name: Start the VM and load the image
+        if: env.SMOKE == 'true'
+        run: |
+          scripts/vm.sh start "$ARCH" "$RUNNER_TEMP/vm-disk/$ARCH.qcow2" "$RUNNER_TEMP/job"
+          scripts/vm.sh ssh docker load -i /job/image.tar
 
       - name: Boot it
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.smoke_test }}
-        timeout-minutes: 15
-        run: scripts/smoke-test.sh "redroid-script:${{ matrix.android }}-${{ matrix.arch }}" "${{ matrix.native_bridge }}" "${{ matrix.android }}"
+        if: env.SMOKE == 'true'
+        env:
+          SMOKE_REMOTE: scripts/vm.sh ssh
+          SMOKE_PUBLISH: 0.0.0.0
+          BOOT_TIMEOUT: ${{ matrix.boot_timeout }}
+          SETTLE_SECONDS: ${{ matrix.settle }}
+        run: scripts/smoke-test.sh "redroid-script:$ANDROID-$ARCH" "${{ matrix.native_bridge }}" "$ANDROID"
+
+      - name: Stop the VM
+        if: always() && env.SMOKE == 'true'
+        run: scripts/vm.sh stop
 
       - name: Log in to cr.regulad.xyz
         if: needs.plan.outputs.publish == 'true'
@@ -154,10 +229,10 @@ jobs:
           REGISTRY: ${{ needs.plan.outputs.registry }}
         run: |
           set -euo pipefail
-          scripts/build.sh "${{ matrix.android }}" "${{ matrix.arch }}" --push "$REGISTRY" "$RUNNER_TEMP/metadata.json"
+          scripts/build.sh "$ANDROID" "$ARCH" --push "$REGISTRY" "$RUNNER_TEMP/metadata.json"
           digest=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/metadata.json")
           mkdir -p "$RUNNER_TEMP/digest"
-          echo "$digest" > "$RUNNER_TEMP/digest/${{ matrix.android }}_${{ matrix.arch }}"
+          echo "$digest" > "$RUNNER_TEMP/digest/${ANDROID}_$ARCH"
           echo "pushed $REGISTRY@$digest" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - if: needs.plan.outputs.publish == 'true'
