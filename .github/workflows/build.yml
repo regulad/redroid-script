@@ -125,14 +125,14 @@ jobs:
 
       # Binder comes from linux-modules-extra on GitHub's kernels.
       - name: Install adb and binder
-        if: ${{ inputs.smoke_test != false }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.smoke_test }}
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q adb
           sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" || echo "::warning::no linux-modules-extra for $(uname -r)"
 
       - name: Boot it
-        if: ${{ inputs.smoke_test != false }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.smoke_test }}
         timeout-minutes: 15
         run: scripts/smoke-test.sh "redroid-script:${{ matrix.android }}-${{ matrix.arch }}" "${{ matrix.native_bridge }}"
 
@@ -264,6 +264,13 @@ jobs:
             # sha256:33d36794ef064c43287d90da2078dee23e98c08258bd8c6ab22f0c83ef7981b4).
             base_diff_id: sha256:fdfeb94a3ddacdb0ffdb897cce695df582ae0d4c2b6cefadb0ca772ab84e4d5e
             original_layer: sha256:26243ec0c8503e973c4cd1881d3b469b7320cd27494158365ecf8213fafd76ec
+            # The script unpacks the first DPI variant os.listdir() returns.
+            # gmscore-arm64.tar.lz, the only package in either zip with two,
+            # holds nodpi then 480, and in 2024 the script took nodpi: the
+            # first entry, which a filesystem that lists small directories in
+            # creation order gives, as XFS does. GitHub's ext4 lists by hash
+            # and gives 480.
+            creation_ordered_scratch: true
     env:
       IMAGE: redroid/redroid:12.0.0_gapps
     steps:
@@ -302,6 +309,17 @@ jobs:
           mkdir -p "$dir"
           curl -fsSL --retry 5 --retry-all-errors -o "$dir/open_gapps.zip" "$URL"
           echo "$SHA256  $dir/open_gapps.zip" | sha256sum -c -
+
+      # The script unpacks into a fixed /tmp/ogapps/extract.
+      - name: Put the script's scratch directory on XFS
+        if: matrix.creation_ordered_scratch
+        run: |
+          sudo apt-get install -y -q xfsprogs
+          truncate -s 2G "$RUNNER_TEMP/ogapps.img"
+          mkfs.xfs -q "$RUNNER_TEMP/ogapps.img"
+          sudo mkdir -p /tmp/ogapps
+          sudo mount -o loop "$RUNNER_TEMP/ogapps.img" /tmp/ogapps
+          sudo chown "$(id -u):$(id -g)" /tmp/ogapps
 
       # As on 2024-07-22, umask included: the 2024 layer's system/ and
       # system/priv-app/ are 0775, which is what a 0002 umask gives the two

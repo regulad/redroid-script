@@ -99,6 +99,12 @@ entry by entry:
 - The only difference allowed is when the script created `system/` and
   `system/priv-app/`.
 
+On arm64 the script's scratch directory goes on XFS first. The script unpacks
+whichever DPI variant of a package a directory listing returns first.
+GmsCore's arm64 package has two variants: `nodpi`, which 2024 shipped, and
+`480`. A filesystem that lists in creation order, as XFS does, returns `nodpi`
+first; GitHub's ext4 returns `480`.
+
 It confirms what the registry already suggested: the 2024 "Android 12" and
 "Android 13" images carry Android 10's OpenGApps, the only package the script
 downloaded. The `COPY gapps /` layer is the same in all three 2024 versions.
