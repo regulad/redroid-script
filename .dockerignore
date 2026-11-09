@@ -1,0 +1,3 @@
+# The build context is only what the Dockerfile copies in.
+*
+!native-bridge/

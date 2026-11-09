@@ -1,0 +1,340 @@
+# Builds every image in matrix.json for amd64 and arm64, boots each one, and
+# publishes those that boot to cr.regulad.xyz/regulad/redroid-script, over the
+# tags Doppelganger already uses: <android>-gapps-latest and, per architecture,
+# <android>-gapps-<arch>-latest. Doppelganger pins every device to the digest it
+# was created from, so moving a tag never changes a device that exists.
+#
+# The inputs are all pinned in matrix.json, and scripts/build.sh is the only
+# way an image gets built, here or on a workstation. This file only decides
+# where each step runs.
+#
+# Alongside, reproduce-2024 runs the script that made the 2024 images, untouched
+# (it is on the legacy/2024-07-22 branch), and checks that what it builds today
+# matches what was published then, file for file.
+name: Build
+
+on:
+  push:
+    branches: [ci]
+  pull_request:
+    branches: [ci]
+  workflow_dispatch:
+    inputs:
+      android:
+        description: Build only this redroid variant (e.g. 16.0.0_64only); leave empty for all
+        default: ""
+      publish:
+        description: Push and tag on cr.regulad.xyz
+        type: boolean
+        default: true
+      smoke_test:
+        description: Boot each image before publishing it
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# Two runs moving the same tags at once could leave some from each.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # moby/buildkit v0.34.1. Pinned so that the builder, which writes the layers,
+  # does not change under the same inputs.
+  BUILDKIT_IMAGE: moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      images: ${{ steps.plan.outputs.images }}
+      builds: ${{ steps.plan.outputs.builds }}
+      publish: ${{ steps.plan.outputs.publish }}
+      registry: ${{ steps.plan.outputs.registry }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Publishing needs a Nexus account allowed to push to the cr repository.
+      # Without one (a fork, or before the secrets are set) everything else
+      # still runs.
+      - id: plan
+        env:
+          ONLY: ${{ inputs.android }}
+          WANT_PUBLISH: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish) }}
+          HAS_CREDENTIALS: ${{ secrets.NEXUS_USERNAME != '' && secrets.NEXUS_PASSWORD != '' }}
+        run: |
+          set -euo pipefail
+          images=$(jq -c --arg only "$ONLY" '[.images[] | select($only == "" or .android == $only) | .android]' matrix.json)
+          if [ "$images" = "[]" ]; then
+            echo "::error::matrix.json has no image '$ONLY'"
+            exit 1
+          fi
+          builds=$(jq -c --arg only "$ONLY" '[
+            .images[] | select($only == "" or .android == $only) | .android as $android
+            | .platforms | to_entries[]
+            | {android: $android, arch: .key, native_bridge: .value.native_bridge,
+               runner: (if .key == "arm64" then "ubuntu-24.04-arm" else "ubuntu-24.04" end)}
+          ]' matrix.json)
+          publish=false
+          if [ "$WANT_PUBLISH" = true ]; then
+            if [ "$HAS_CREDENTIALS" = true ]; then
+              publish=true
+            else
+              echo "::warning::NEXUS_USERNAME and NEXUS_PASSWORD are not set, so nothing is published"
+            fi
+          fi
+          {
+            echo "images=$images"
+            echo "builds=$builds"
+            echo "publish=$publish"
+            echo "registry=$(jq -r .registry matrix.json)"
+          } >> "$GITHUB_OUTPUT"
+
+  # Each image is built on its own architecture, though build.sh does not need
+  # that, so that it can be booted before it is pushed.
+  build:
+    needs: plan
+    name: ${{ matrix.android }} ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # build.sh dates the image by the last commit that touched an input.
+          fetch-depth: 0
+
+      # A base is about 3 GB unpacked, and the image is held twice: in
+      # BuildKit and in the Docker engine it is loaded into to boot.
+      - name: Make room
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      - name: Build
+        run: scripts/build.sh "${{ matrix.android }}" "${{ matrix.arch }}" --load
+
+      # Binder comes from linux-modules-extra on GitHub's kernels.
+      - name: Install adb and binder
+        if: ${{ inputs.smoke_test != false }}
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q adb
+          sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" || echo "::warning::no linux-modules-extra for $(uname -r)"
+
+      - name: Boot it
+        if: ${{ inputs.smoke_test != false }}
+        timeout-minutes: 15
+        run: scripts/smoke-test.sh "redroid-script:${{ matrix.android }}-${{ matrix.arch }}" "${{ matrix.native_bridge }}"
+
+      - name: Log in to cr.regulad.xyz
+        if: needs.plan.outputs.publish == 'true'
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: cr.regulad.xyz
+          username: ${{ secrets.NEXUS_USERNAME }}
+          password: ${{ secrets.NEXUS_PASSWORD }}
+
+      # The same build again, from BuildKit's cache, exported to the registry
+      # instead: pushed straight from BuildKit, the base's layers keep the
+      # compressed bytes and digests they have on Docker Hub. Untagged; the
+      # publish job tags it once both architectures are in.
+      - name: Push by digest
+        if: needs.plan.outputs.publish == 'true'
+        env:
+          REGISTRY: ${{ needs.plan.outputs.registry }}
+        run: |
+          set -euo pipefail
+          scripts/build.sh "${{ matrix.android }}" "${{ matrix.arch }}" --push "$REGISTRY" "$RUNNER_TEMP/metadata.json"
+          digest=$(jq -r '."containerimage.digest"' "$RUNNER_TEMP/metadata.json")
+          mkdir -p "$RUNNER_TEMP/digest"
+          echo "$digest" > "$RUNNER_TEMP/digest/${{ matrix.android }}_${{ matrix.arch }}"
+          echo "pushed $REGISTRY@$digest" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - if: needs.plan.outputs.publish == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.android }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digest/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # Runs even when some builds failed: each image is tagged only when both of
+  # its architectures built and booted, so one bad image holds back only its
+  # own tags.
+  publish:
+    needs: [plan, build]
+    if: ${{ !cancelled() && needs.plan.outputs.publish == 'true' }}
+    name: Publish ${{ matrix.android }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      # For cosign's keyless signing through GitHub's OIDC token.
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        android: ${{ fromJSON(needs.plan.outputs.images) }}
+    env:
+      REGISTRY: ${{ needs.plan.outputs.registry }}
+      ANDROID: ${{ matrix.android }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-${{ matrix.android }}-*
+          path: ${{ runner.temp }}/digest
+          merge-multiple: true
+
+      - name: Check both architectures are in
+        run: |
+          for arch in amd64 arm64; do
+            if [ ! -s "$RUNNER_TEMP/digest/${ANDROID}_$arch" ]; then
+              echo "::error::$ANDROID has no $arch image from this run, so its tags stay where they were"
+              exit 1
+            fi
+          done
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: cr.regulad.xyz
+          username: ${{ secrets.NEXUS_USERNAME }}
+          password: ${{ secrets.NEXUS_PASSWORD }}
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.1.4
+
+      - name: Tag and sign
+        run: |
+          set -euo pipefail
+          amd64=$(cat "$RUNNER_TEMP/digest/${ANDROID}_amd64")
+          arm64=$(cat "$RUNNER_TEMP/digest/${ANDROID}_arm64")
+          docker buildx imagetools create -t "$REGISTRY:$ANDROID-gapps-latest" "$REGISTRY@$amd64" "$REGISTRY@$arm64"
+          docker buildx imagetools create -t "$REGISTRY:$ANDROID-gapps-amd64-latest" "$REGISTRY@$amd64"
+          docker buildx imagetools create -t "$REGISTRY:$ANDROID-gapps-arm64-latest" "$REGISTRY@$arm64"
+          index=$(docker buildx imagetools inspect "$REGISTRY:$ANDROID-gapps-latest" --format '{{json .Manifest}}' | jq -r .digest)
+          cosign sign --yes --recursive "$REGISTRY@$index"
+          {
+            echo "### $ANDROID"
+            echo "- \`$REGISTRY:$ANDROID-gapps-latest\` = \`$index\`"
+            echo "- amd64 \`$amd64\`, arm64 \`$arm64\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  reproduce-2024:
+    name: Reproduce the 2024 ${{ matrix.arch }} image
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The amd64 image was built at 541581e and the arm64 one at cfe298a,
+          # its child, which changed only the arm64 download; the branch's tip,
+          # cfe298a, therefore builds both as they were built.
+          - arch: amd64
+            runner: ubuntu-24.04
+            # What the script fetches for x86_64; md5 5fb186bf..., as it expects.
+            opengapps_url: https://sourceforge.net/projects/opengapps/files/x86_64/20220503/open_gapps-x86_64-10.0-pico-20220503.zip/download
+            opengapps_sha256: ed6073a234ee47b5b5d564b91f7b819d5e2c004fc1af01f55d57729e33a52e12
+            # 12.0.0-gapps-amd64-latest as published on 2024-07-22 (manifest
+            # sha256:6dd48ca7541e0a0348cb06e5fd575b910be7d705466a08dafd2c6b4ec192b948):
+            # redroid/redroid:12.0.0-240527, then the layer `COPY gapps /` made.
+            base_diff_id: sha256:93571d68290165b7fec3b45b2a69be570b8a21430f5aca5bce3338fb97807d4b
+            original_layer: sha256:118a82c4ea7ee0f44d9582b4637feec8b6b93282d9a5c5861cadabbfc0547f93
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            # The script's own arm64 URL, on a SourceForge mirror that no longer
+            # resolves, named this file; md5 2feaf25d..., as it expects.
+            opengapps_url: https://sourceforge.net/projects/opengapps/files/arm64/20220503/open_gapps-arm64-10.0-pico-20220503.zip/download
+            opengapps_sha256: 2f2dda03f57297f15011982f0b773fb36ef8c81ae14a805509073f44f63a3370
+            # 12.0.0-gapps-arm64-latest as published on 2024-07-22 (manifest
+            # sha256:33d36794ef064c43287d90da2078dee23e98c08258bd8c6ab22f0c83ef7981b4).
+            base_diff_id: sha256:fdfeb94a3ddacdb0ffdb897cce695df582ae0d4c2b6cefadb0ca772ab84e4d5e
+            original_layer: sha256:26243ec0c8503e973c4cd1881d3b469b7320cd27494158365ecf8213fafd76ec
+    env:
+      XDG_CACHE_HOME: ${{ runner.temp }}/cache
+      IMAGE: redroid/redroid:12.0.0_gapps
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: legacy/2024-07-22
+          path: src
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: ci
+          sparse-checkout: scripts/compare-layers.py
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install what the script needs
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q lzip
+          pip install -r src/requirements.txt
+
+      # The script keeps a zip whose md5 it recognises instead of downloading
+      # it again, so placing the file is enough; the script stays untouched.
+      - name: Put the OpenGApps zip where the script looks
+        env:
+          URL: ${{ matrix.opengapps_url }}
+          SHA256: ${{ matrix.opengapps_sha256 }}
+        run: |
+          dir="$XDG_CACHE_HOME/redroid/downloads"
+          mkdir -p "$dir"
+          curl -fsSL --retry 5 --retry-all-errors -o "$dir/open_gapps.zip" "$URL"
+          echo "$SHA256  $dir/open_gapps.zip" | sha256sum -c -
+
+      # As on 2024-07-22, umask included: the 2024 layer's system/ and
+      # system/priv-app/ are 0775, which is what a 0002 umask gives the two
+      # directories the script creates.
+      - name: Run the 2024 script
+        working-directory: src
+        run: |
+          umask 0002
+          python3 redroid.py -a 12.0.0 -g -b
+          # The script does not check docker build's exit status.
+          docker image inspect "$IMAGE" > /dev/null
+
+      - name: Compare with the published 2024 image
+        env:
+          BASE_DIFF_ID: ${{ matrix.base_diff_id }}
+          ORIGINAL_LAYER: ${{ matrix.original_layer }}
+        run: |
+          set -euo pipefail
+          base=$(docker image inspect -f '{{index .RootFS.Layers 0}}' "$IMAGE")
+          if [ "$base" != "$BASE_DIFF_ID" ]; then
+            echo "::error::the base layer is $base, but in 2024 it was $BASE_DIFF_ID"
+            exit 1
+          fi
+          echo "base layer: $base, as in 2024"
+
+          work=$RUNNER_TEMP/compare
+          mkdir -p "$work/saved"
+          docker save "$IMAGE" -o "$work/rebuilt.tar"
+          tar -xf "$work/rebuilt.tar" -C "$work/saved"
+          layer=$(jq -r '.[0].Layers[-1]' "$work/saved/manifest.json")
+
+          curl -fsSL --retry 5 -o "$work/original.tar.gz" \
+            "https://cr.regulad.xyz/v2/regulad/redroid-script/blobs/$ORIGINAL_LAYER"
+          echo "${ORIGINAL_LAYER#sha256:}  $work/original.tar.gz" | sha256sum -c -
+
+          # Only the two directories the script creates may differ, and only in
+          # when they were made.
+          python3 ci/scripts/compare-layers.py "$work/original.tar.gz" "$work/saved/$layer" \
+            --ignore-mtime system --ignore-mtime system/priv-app | tee -a "$GITHUB_STEP_SUMMARY"
