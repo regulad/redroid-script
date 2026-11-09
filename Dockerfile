@@ -30,7 +30,7 @@ RUN apk add --no-cache curl git tar unzip xz
 FROM tools AS gapps-download
 ARG GAPPS_URL
 ARG GAPPS_SHA256
-RUN curl -fsSL --retry 5 --retry-all-errors -o /gapps.zip "${GAPPS_URL}" \
+RUN curl -fsSL --retry 8 --retry-all-errors -o /gapps.zip "${GAPPS_URL}" \
  && echo "${GAPPS_SHA256}  /gapps.zip" | sha256sum -c -
 
 # A MindTheGapps zip is a recovery package. Its system/ is the tree the
@@ -58,7 +58,7 @@ ARG ADDON_URL
 ARG ADDON_SHA256
 RUN mkdir -p /out \
  && if [ -n "${ADDON_URL}" ]; then \
-      curl -fsSL --retry 5 --retry-all-errors -o /addon.zip "${ADDON_URL}" \
+      curl -fsSL --retry 8 --retry-all-errors -o /addon.zip "${ADDON_URL}" \
       && echo "${ADDON_SHA256}  /addon.zip" | sha256sum -c - \
       && unzip -q /addon.zip 'system/*' -d /out; \
     fi
@@ -135,10 +135,11 @@ COPY --link --from=payload /p/ /
 # one app is the setup wizard. With both, Google's is refused them, crashes
 # ("WifiService: Permission denied"), and, being the home screen until setup
 # is done, keeps crashing. The base has no shell a build can use, so a static
-# busybox does it. It is mounted under /dev, which is not part of the image.
+# busybox does it. It is mounted under /dev, which is not part of the image,
+# as busybox: it picks the applet from argv[0] unless that names busybox.
 # rm without -f fails if the base no longer has Provision there.
-RUN --mount=type=bind,from=busybox,source=/bin/busybox,target=/dev/.busybox \
-    ["/dev/.busybox", "rm", "-r", "/system/system_ext/priv-app/Provision"]
+RUN --mount=type=bind,from=busybox,source=/bin/busybox,target=/dev/busybox \
+    ["/dev/busybox", "rm", "-r", "/system/system_ext/priv-app/Provision"]
 # The base's entrypoint, plus a disabled setup wizard: Google's then finishes
 # setup at once, as a redroid container has no one at a screen to go through it.
 ENTRYPOINT ["/init", "qemu=1", "androidboot.hardware=redroid", "ro.setupwizard.mode=DISABLED"]
